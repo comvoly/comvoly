@@ -1,0 +1,15 @@
+# Python environments and secrets
+backend/.venv/
+backend/.env
+backend/data/
+backend/backups/
+__pycache__/
+*.py[cod]
+*.session
+
+# Node build output
+frontend/.next/
+
+# Editor and OS files
+.vscode/
+.DS_Store
