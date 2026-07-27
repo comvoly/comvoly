@@ -1,7 +1,7 @@
 # Comvoly test deployment
 
 This deployment uses one small Railway service for the Python API and Telegram sync,
-Neon PostgreSQL for the archive, and Cloudflare Pages for the static frontend.
+Neon PostgreSQL for the archive, and Cloudflare Workers Static Assets for the frontend.
 
 ## Safety rules
 
@@ -42,16 +42,16 @@ The embedded sync creates the schema automatically and imports up to 100 new mes
 per pass. For the current test archive this reproduces the local 61 messages in Neon.
 Verify the message count in Comvoly before considering the cloud archive authoritative.
 
-## Cloudflare Pages
+## Cloudflare Workers Static Assets
 
-Create a Pages project from the same GitHub repository:
+Create a Workers project from the same GitHub repository. Cloudflare's unified setup
+replaces the older Pages flow for new static sites:
 
-- Root directory: `frontend`
-- Build command: `npm run build`
-- Output directory: `out`
+- Build command: `cd frontend && npm ci && npm run build`
+- Deploy command: `npx wrangler deploy --config wrangler.jsonc`
 - Build variable: `NEXT_PUBLIC_COMVOLY_API_URL=https://api.comvoly.com`
 
-First use the generated `pages.dev` URL. After the API is healthy, attach `comvoly.com`
+First use the generated `workers.dev` URL. After the API is healthy, attach `comvoly.com`
 and `www.comvoly.com`, then redirect `comvoly.co.uk` to `https://comvoly.com`.
 
 ## Private-pilot access
