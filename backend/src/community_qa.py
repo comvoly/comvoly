@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import os
 import re
-import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import APIConnectionError, APIStatusError, AuthenticationError, OpenAI, RateLimitError
+from database import connect_database
 
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -17,7 +17,9 @@ DATABASE = BACKEND_DIR / "data" / "comvoly.db"
 MAX_ARCHIVE_CHARACTERS = 180_000
 
 load_dotenv(BACKEND_DIR / ".env")
-MODEL = os.getenv("COMVOLY_AI_MODEL", "gpt-5.6-terra")
+MODEL = os.getenv("COMVOLY_AI_MODEL", "gpt-5.6-luna")
+REASONING_EFFORT = os.getenv("COMVOLY_AI_REASONING", "none")
+MAX_OUTPUT_TOKENS = int(os.getenv("COMVOLY_AI_MAX_OUTPUT_TOKENS", "1200"))
 
 
 @dataclass(frozen=True)
@@ -37,10 +39,9 @@ class GroundedAnswer:
 
 
 def archive_messages() -> list[Evidence]:
-    if not DATABASE.exists():
+    if not DATABASE.exists() and not os.getenv("DATABASE_URL"):
         return []
-    with sqlite3.connect(DATABASE) as connection:
-        connection.row_factory = sqlite3.Row
+    with connect_database(DATABASE) as connection:
         rows = connection.execute(
             """SELECT messages.id, communities.title, messages.sent_at,
                 messages.sender_telegram_id, messages.text, messages.has_media
@@ -92,6 +93,8 @@ def answer_question(question: str) -> GroundedAnswer:
         response = OpenAI().responses.create(
             model=MODEL,
             store=False,
+            reasoning={"effort": REASONING_EFFORT},
+            max_output_tokens=MAX_OUTPUT_TOKENS,
             instructions=(
                 "You are Comvoly, an assistant for an authorised private community archive. "
                 "Answer only from the supplied archive messages. Synthesize the community's useful "

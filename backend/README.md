@@ -58,7 +58,18 @@ py src\lite_app.py
 
 ## Grounded AI answers
 
-Add `OPENAI_API_KEY` to `.env`, then start Comvoly with `src\Start Comvoly.cmd`.
+Add `OPENAI_API_KEY` to `.env`. Configure the local owner sign-in once:
+
+```cmd
+.venv\Scripts\python.exe src\configure_owner.py
+```
+
+Choose a password with at least 12 characters. Comvoly stores a slow password hash,
+not the password itself. Then start Comvoly with `src\Start Comvoly.cmd`.
 The owner dashboard can interpret the imported archive and cites the supporting
 messages inside Comvoly. Asking a question sends the included archive evidence to
 the configured OpenAI model; API billing is separate from a ChatGPT subscription.
+
+The testing defaults use GPT-5.6 Luna without additional reasoning and cap answers at
+1,200 output tokens for lower latency and cost. Set `COMVOLY_AI_MODEL=gpt-5.6-terra`
+and `COMVOLY_AI_REASONING=low` if representative questions need greater synthesis quality.

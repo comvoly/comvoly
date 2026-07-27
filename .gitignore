@@ -9,6 +9,7 @@ __pycache__/
 
 # Node build output
 frontend/.next/
+frontend/out/
 
 # Editor and OS files
 .vscode/
