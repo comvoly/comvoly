@@ -86,7 +86,7 @@ def search_messages(query: str) -> list[dict[str, object]]:
                    communities.title AS community_title
             FROM messages
             JOIN communities ON communities.id = messages.community_id
-            WHERE messages.text LIKE ? COLLATE NOCASE
+            WHERE LOWER(COALESCE(messages.text, '')) LIKE LOWER(?)
             ORDER BY messages.sent_at DESC
             LIMIT 50
             """),
