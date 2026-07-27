@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from community_qa import answer_question
-from database import connect_database, query as db_query, uses_postgres
+from database import connect_database, create_schema, query as db_query, uses_postgres
 from auth import (
     authentication_configured,
     create_session,
@@ -245,6 +245,11 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
 
 
 def main() -> None:
+    with connect_database(DATABASE_PATH) as database:
+        create_schema(database)
+        database.execute("SELECT 1").fetchone()
+    print("Database connection and schema verified.")
+
     if os.getenv("COMVOLY_RUN_SYNC", "false").lower() == "true":
         from telegram_import import watch_for_messages
 
