@@ -43,6 +43,11 @@ def query(sql: str) -> str:
 
 
 def create_schema(connection: Any) -> None:
+    """Create the prototype schema and apply all additive v2 migrations.
+
+    The legacy tables remain in place until a separately approved live-data
+    migration. New code should use the v2 repositories and workspace scope.
+    """
     identity = "BIGSERIAL PRIMARY KEY" if uses_postgres() else "INTEGER PRIMARY KEY"
     statements = [
         f"""CREATE TABLE IF NOT EXISTS communities (
@@ -65,6 +70,12 @@ def create_schema(connection: Any) -> None:
         connection.execute("PRAGMA foreign_keys = ON")
     for statement in statements:
         connection.execute(statement)
+    # Main is deployed automatically. Never alter the live schema merely because
+    # foundation code was released; a reviewed rollout must opt in explicitly.
+    if os.getenv("COMVOLY_ENABLE_V2_SCHEMA", "false").lower() == "true":
+        from migrations import apply_migrations
+
+        apply_migrations(connection)
 
 
 def inserted_id(cursor: Any) -> int:

@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+import sqlite3
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from authorization import AccessDenied, Principal
+from database import connect_database, create_schema
+from identity_provider import LocalTestIdentityProvider, VerifiedIdentity
+from job_security import InvalidJobIdentity, JobIdentity, authorise_job, sign_job, verify_job
+from v2_store import ComvolyStore, utc_now
+
+
+class V2FoundationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.path = Path(self.temp.name) / "foundation.db"
+        self.environment = patch.dict("os.environ", {
+            "DATABASE_URL": "", "COMVOLY_ENABLE_V2_SCHEMA": "true"
+        })
+        self.environment.start()
+        self.database_context = connect_database(self.path)
+        self.database = self.database_context.__enter__()
+        create_schema(self.database)
+        self.store = ComvolyStore(self.database)
+        self.owner_a = Principal(self.store.create_account("Owner A", "acct_a"))
+        self.owner_b = Principal(self.store.create_account("Owner B", "acct_b"))
+        self.member = Principal(self.store.create_account("Member", "acct_member"))
+        self.workspace_a = self.store.create_workspace(self.owner_a, "Alpha", "alpha", "ws_a")
+        self.workspace_b = self.store.create_workspace(self.owner_b, "Beta", "beta", "ws_b")
+        self.context_a = self.store.context(self.owner_a, self.workspace_a, "manage_sources")
+        self.context_b = self.store.context(self.owner_b, self.workspace_b, "manage_sources")
+        now = utc_now()
+        for workspace, source in (("ws_a", "src_a"), ("ws_b", "src_b")):
+            self.database.execute("""INSERT INTO source_connections
+                (id, workspace_id, provider, external_community_id, display_name, state, created_at, updated_at)
+                VALUES (?, ?, 'fixture', ?, ?, 'connected', ?, ?)""",
+                (source, workspace, f"external_{source}", source, now, now))
+
+    def tearDown(self) -> None:
+        self.database_context.__exit__(None, None, None)
+        self.environment.stop()
+        self.temp.cleanup()
+
+    def _add_content(self) -> tuple[str, str]:
+        item_a = self.store.add_content(self.context_a, "src_a", "1", "alpha secret", utc_now())
+        item_b = self.store.add_content(self.context_b, "src_b", "1", "beta secret", utc_now())
+        return item_a, item_b
+
+    def test_migrations_are_versioned_idempotent_and_preserve_legacy_schema(self) -> None:
+        create_schema(self.database)
+        tables = {row[0] for row in self.database.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertTrue({"communities", "accounts", "workspaces", "content_items", "import_jobs", "audit_events"}.issubset(tables))
+        migrations = self.database.execute("SELECT version, name FROM schema_migrations").fetchall()
+        self.assertEqual([(1, "v2_secure_multi_community_foundation")], [tuple(row) for row in migrations])
+
+    def test_account_can_hold_multiple_workspace_memberships(self) -> None:
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        self.store.add_membership(self.context_b, self.member.account_id, "member")
+        workspaces = self.store.list_workspaces(self.member)
+        self.assertEqual({"ws_a", "ws_b"}, {row["id"] for row in workspaces})
+
+    def test_unrelated_account_cannot_authorise_workspace(self) -> None:
+        with self.assertRaises(AccessDenied):
+            self.store.context(self.owner_b, self.workspace_a, "view_evidence")
+
+    def test_member_cannot_import_or_manage_sources(self) -> None:
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        with self.assertRaises(AccessDenied):
+            self.store.context(self.member, self.workspace_a, "import_history")
+        with self.assertRaises(AccessDenied):
+            self.store.context(self.member, self.workspace_a, "manage_sources")
+
+    def test_suspended_account_cannot_use_active_membership(self) -> None:
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        self.database.execute("UPDATE accounts SET status = 'suspended' WHERE id = 'acct_member'")
+        with self.assertRaises(AccessDenied):
+            self.store.context(self.member, self.workspace_a, "view_evidence")
+
+    def test_limited_administrator_capability_requires_explicit_override(self) -> None:
+        self.store.add_membership(self.context_a, self.member.account_id, "administrator")
+        with self.assertRaises(AccessDenied):
+            self.store.context(self.member, self.workspace_a, "export_workspace")
+        self.database.execute("""INSERT INTO capability_overrides
+            (workspace_id, account_id, capability, allowed, granted_by_account_id, created_at)
+            VALUES ('ws_a', 'acct_member', 'export_workspace', 1, 'acct_a', ?)""", (utc_now(),))
+        context = self.store.context(self.member, self.workspace_a, "export_workspace")
+        self.assertEqual("administrator", context.role)
+
+    def test_search_and_direct_content_lookup_cannot_cross_workspace(self) -> None:
+        item_a, item_b = self._add_content()
+        read_a = self.store.context(self.owner_a, self.workspace_a, "use_intelligence")
+        evidence_a = self.store.context(self.owner_a, self.workspace_a, "view_evidence")
+        self.assertEqual([item_a], [row["id"] for row in self.store.search_content(read_a, "secret")])
+        self.assertIsNone(self.store.get_content(evidence_a, item_b))
+
+    def test_jobs_and_checkpoints_reject_cross_workspace_sources_and_ids(self) -> None:
+        import_a = self.store.context(self.owner_a, self.workspace_a, "import_history")
+        import_b = self.store.context(self.owner_b, self.workspace_b, "import_history")
+        with self.assertRaises(ValueError):
+            self.store.create_import_job(import_a, "src_b", "history", "wrong-source")
+        job_b = self.store.create_import_job(import_b, "src_b", "history", "beta-history")
+        with self.assertRaises(ValueError):
+            self.store.save_checkpoint(import_a, job_b, "page", {"cursor": 2})
+
+    def test_media_lookup_cannot_cross_workspace(self) -> None:
+        item_a, item_b = self._add_content()
+        now = utc_now()
+        self.database.execute("""INSERT INTO media_assets
+            (id, workspace_id, content_item_id, media_type, source_availability, download_state,
+             safety_state, extraction_state, retention_state, created_at, updated_at)
+             VALUES ('media_b', 'ws_b', ?, 'image/png', 'available', 'stored', 'clean', 'pending', 'active', ?, ?)""",
+             (item_b, now, now))
+        evidence_a = self.store.context(self.owner_a, self.workspace_a, "view_evidence")
+        self.assertEqual([], self.store.list_media(evidence_a, item_b))
+        self.assertEqual([], self.store.list_media(evidence_a, item_a))
+
+    def test_database_rejects_cross_workspace_content_reference(self) -> None:
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.database.execute("""INSERT INTO content_items
+                (id, workspace_id, source_connection_id, external_item_id, item_type,
+                 source_created_at, ingestion_method, ingested_at)
+                 VALUES ('bad', 'ws_a', 'src_b', 'bad', 'message', ?, 'test', ?)""", (utc_now(), utc_now()))
+
+    def test_identity_adapter_is_closed_by_default(self) -> None:
+        identity = VerifiedIdentity("test", "subject-1", "A Person", {})
+        self.assertIsNone(LocalTestIdentityProvider().verify_session("unknown"))
+        self.assertEqual(identity, LocalTestIdentityProvider({"token": identity}).verify_session("token"))
+
+    def test_export_manifest_contains_only_authorised_workspace(self) -> None:
+        self._add_content()
+        export_a = self.store.context(self.owner_a, self.workspace_a, "export_workspace")
+        manifest = self.store.export_manifest(export_a)
+        self.assertEqual("ws_a", manifest["workspace"]["id"])
+        self.assertEqual(["src_a"], [source["id"] for source in manifest["sources"]])
+        self.assertEqual(1, manifest["content_count"])
+
+    def test_members_cannot_export_workspace(self) -> None:
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        with self.assertRaises(AccessDenied):
+            self.store.context(self.member, self.workspace_a, "export_workspace")
+
+    def test_usage_and_audit_reads_are_workspace_scoped(self) -> None:
+        usage_a = self.store.context(self.owner_a, self.workspace_a, "view_usage")
+        usage_b = self.store.context(self.owner_b, self.workspace_b, "view_usage")
+        self.store.increment_usage(usage_a, "ai_tokens", "2026-07-01", 50, 2)
+        self.store.increment_usage(usage_b, "ai_tokens", "2026-07-01", 900, 40)
+        self.assertEqual(50, self.store.get_usage(usage_a, "2026-07-01")[0]["quantity"])
+        audit_a = self.store.context(self.owner_a, self.workspace_a, "review_concerns")
+        self.assertTrue(all(event["target_id"] != "ws_b" for event in self.store.list_audit_events(audit_a)))
+
+    def test_job_identity_is_signed_expiring_and_bound_to_database_scope(self) -> None:
+        context = self.store.context(self.owner_a, self.workspace_a, "import_history")
+        job_id = self.store.create_import_job(context, "src_a", "history", "signed-job")
+        secret = "a-secure-internal-job-secret-value"
+        token = sign_job(JobIdentity(job_id, "ws_a", "src_a", 2_000), secret)
+        verified = verify_job(token, secret, now=1_000)
+        authorise_job(self.database, verified)
+        with self.assertRaises(InvalidJobIdentity):
+            verify_job(token + "tampered", secret, now=1_000)
+        with self.assertRaises(InvalidJobIdentity):
+            verify_job(token, secret, now=2_001)
+        with self.assertRaises(InvalidJobIdentity):
+            authorise_job(self.database, JobIdentity(job_id, "ws_b", "src_a", 2_000))
+
+
+if __name__ == "__main__":
+    unittest.main()

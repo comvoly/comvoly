@@ -1,5 +1,10 @@
 # Telegram feasibility spike
 
+> The current web experience remains a protected single-owner prototype. The additive
+> Comvoly v2 multi-community foundation is documented in
+> `docs/product/IMPLEMENTATION_FOUNDATION.md`; it does not migrate live data or enable
+> multi-user production authentication yet.
+
 This small local tool is Comvoly's first technical proof of concept. It imports messages from one Telegram community that the signed-in account is authorised to access and stores them in a local SQLite database.
 
 It does not yet provide a web interface, AI answers, cloud storage, or multi-user access. Those come after the basic import works reliably.
@@ -27,6 +32,17 @@ Telegram will ask for the account phone number and its one-time sign-in code dur
 ## Security boundary
 
 This importer must only be used for communities the signed-in Telegram account is authorised to access, and its local database is only for this development proof of concept.
+
+## Run the automated verification
+
+From the `backend` directory, use the project's virtual environment:
+
+```cmd
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+The suite includes negative multi-community isolation checks. It creates temporary
+SQLite databases and does not connect to the configured live database.
 
 ## Re-importing and syncing
 

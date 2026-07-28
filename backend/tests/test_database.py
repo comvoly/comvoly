@@ -30,6 +30,7 @@ class DatabaseTests(unittest.TestCase):
                     )
                 }
             self.assertTrue({"communities", "messages", "sync_runs"}.issubset(tables))
+            self.assertNotIn("accounts", tables)
 
 
 if __name__ == "__main__":

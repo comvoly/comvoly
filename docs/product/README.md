@@ -25,6 +25,7 @@ For phone review, open the consolidated
 6. [Historical import and media](IMPORT_AND_MEDIA.md)
 7. [Pilot and implementation roadmap](PILOT_AND_ROADMAP.md)
 8. [Decisions, assumptions, and risks](DECISIONS_AND_RISKS.md)
+9. [Implemented secure foundation](IMPLEMENTATION_FOUNDATION.md)
 
 ## Package status
 
