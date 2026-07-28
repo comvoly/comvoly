@@ -53,3 +53,12 @@ at the laptop.
 
 Comvoly must only expose a community's data to people authorised to access that
 community. AI output must cite the original community content it relies on.
+
+## Product design
+
+The working prototype is now followed by a documented multi-community product-design
+phase. See the [Comvoly v2 product-design package](docs/product/README.md) for the
+requirements, owner/member journeys, identity and permission model, platform connector
+specifications, historical import/media design, pilot, risks, and implementation
+roadmap. No major production rewrite should begin until its material decisions and
+external platform gates have been reviewed.
