@@ -8,6 +8,9 @@ prototype. It turns the high-level [product blueprint](../../PRODUCT_BLUEPRINT.m
 requirements, journeys, permissions, connector contracts, import/media behaviour,
 screen specifications, pilot criteria, and an implementation sequence.
 
+For phone review, open the consolidated
+[Comvoly v2 mobile review PDF](../../output/pdf/comvoly-v2-mobile-review.pdf).
+
 ## Documents
 
 1. [Product requirements](PRODUCT_REQUIREMENTS.md)
