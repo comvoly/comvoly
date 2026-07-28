@@ -2,9 +2,13 @@
 
 ## 1. Purpose
 
-Comvoly gives authorised members a useful memory of their online communities. It
-imports permitted historical and ongoing content, then supports cited questions,
-search, catch-up, exploration, and saved knowledge.
+Comvoly uses AI to interpret the accumulated knowledge inside authorised online
+communities. It goes beyond searching individual messages by connecting conversations,
+experience, recommendations, decisions, patterns, and resources into cited answers,
+catch-ups, insights, exploration, and reusable community knowledge.
+
+Every interpretation remains grounded in permitted source material so members can
+inspect the people, messages, and evidence behind it.
 
 This specification defines the invitation-only multi-community pilot. It does not
 define the eventual public marketplace, native mobile application, or enterprise
@@ -224,4 +228,3 @@ The pilot product is not accepted merely because content can be ingested. It is
 accepted when a non-technical owner can connect, import, review, invite, operate,
 export, and delete, and when an authorised member can reliably find value without
 developer intervention.
-

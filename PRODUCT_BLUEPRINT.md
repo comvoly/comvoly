@@ -9,18 +9,21 @@ Detailed specifications and review material are indexed in
 
 ## 1. Product definition
 
-Comvoly is a private intelligence and memory layer for online communities. It turns
-authorised community conversations and resources into searchable, cited answers,
-catch-up summaries, decisions, recommendations, and reusable knowledge.
+Comvoly is an AI-powered intelligence layer for online communities. It does more than
+find old messages: it interprets the accumulated conversation, experience,
+recommendations, decisions, patterns, and resources inside an authorised community,
+turning fragmented discussion into grounded answers, catch-ups, insights, and reusable
+knowledge.
 
 Comvoly is not a general-purpose chatbot, a covert monitoring product, or a tool that
-trains models on community content. Its value comes from helping permitted members use
-knowledge their communities have already created.
+trains models on community content. Its value comes from making the wealth of knowledge
+a community has already created understandable and useful, while keeping every insight
+traceable to the original people, messages, and evidence behind it.
 
 ### North-star promise
 
-> Connect a community, bring its useful history with you, and make its collective
-> knowledge easy for authorised members to find and understand.
+> Turn the wealth of knowledge inside a community into clear, useful intelligence -
+> with every insight grounded in the conversations and evidence behind it.
 
 ### Product principles
 

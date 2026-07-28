@@ -8,6 +8,10 @@ prototype. It turns the high-level [product blueprint](../../PRODUCT_BLUEPRINT.m
 requirements, journeys, permissions, connector contracts, import/media behaviour,
 screen specifications, pilot criteria, and an implementation sequence.
 
+The core proposition is AI-powered community intelligence: Comvoly interprets the
+wealth of knowledge inside authorised community history rather than functioning as a
+simple message search tool, while keeping its outputs traceable to original evidence.
+
 For phone review, open the consolidated
 [Comvoly v2 mobile review PDF](../../output/pdf/comvoly-v2-mobile-review.pdf).
 
