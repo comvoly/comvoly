@@ -102,16 +102,39 @@ credentialed HTTPS client for the managed Auth endpoints instead; passwords rema
 handled by Neon, and the only credential sent to Comvoly's API is a short-lived JWT.
 The SDK should not be reintroduced until its published dependency tree passes review.
 
-The browser connection was unavailable when this integration slice was completed, so a
-replacement isolated Neon Auth project and its environment values still need to be
-created. No Auth URL, user or production configuration is currently active. Production
-registration and Auth remain a separate approval and rollout step.
+On 29 July 2026, the approved isolated Auth environment was activated as a separate
+free-tier Neon project:
 
-## Decision required before activation
+- project `comvoly-v2-development` (`morning-tree-70922570`), in AWS Europe West 2
+  (London);
+- production branch `br-icy-glade-zac59aez` inside that development-only project;
+- unrestricted email/password registration enabled, as approved for development;
+- localhost authentication allowed; no `comvoly.com` production origin added;
+- migrations 1 and 2 applied successfully, with both migration records and all six
+  sampled v2 core tables verified; and
+- the public JWKS endpoint verified with one EdDSA/OKP signing key.
 
-The next step requires selecting a managed identity provider and approving a staged
-database rollout. The existing provider-neutral `IdentityProvider` boundary allows the
-choice to be made without changing the domain model.
+The development Auth URL is
+`https://ep-small-mountain-zaekbbuv.neonauth.c-2.eu-west-2.aws.neon.tech/neondb/auth`.
+Its issuer is the same URL and its JWKS URL appends
+`/.well-known/jwks.json`. These values are non-secret; the database connection string
+remains a secret and is not recorded here.
+
+Registration is intentionally unrestricted only at the identity boundary. A verified
+new identity may create an `accounts` and `linked_identities` record when
+`COMVOLY_V2_SELF_REGISTRATION=true`, but it receives no membership, workspace,
+community content or owner capability. Workspace creation remains independently gated
+by `COMVOLY_V2_ALLOW_WORKSPACE_CREATION=false`.
+
+No production branch, live data, Railway variable, Cloudflare deployment or
+`comvoly.com` authentication setting was changed. Production registration and Auth
+remain a separate approval and rollout step.
+
+## Decision required before production activation
+
+Neon Auth is now the development provider under evaluation. Production activation still
+requires an explicit staged rollout decision. The existing provider-neutral
+`IdentityProvider` boundary allows a provider change without changing the domain model.
 
 The decision should compare at least:
 
