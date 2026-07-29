@@ -76,8 +76,15 @@ class NeonJWTIdentityProvider:
         if self._jwks_client is None:
             self._jwks_client = jwt.PyJWKClient(self.jwks_url, cache_jwk_set=True, lifespan=300)
         key = self._jwks_client.get_signing_key_from_jwt(token).key
-        options = {"require": ["exp", "iat", "sub"], "verify_aud": self.audience is not None}
-        return jwt.decode(token, key, algorithms=list(self.algorithms), issuer=self.issuer,
+        options = {
+            "require": ["exp", "iat", "iss", "sub"],
+            "verify_aud": self.audience is not None,
+            # Neon currently emits the configured Auth URL with a trailing slash.
+            # Verify the signed claim below after canonicalising that one benign
+            # representation difference; every other issuer remains rejected.
+            "verify_iss": False,
+        }
+        return jwt.decode(token, key, algorithms=list(self.algorithms),
                           audience=self.audience, options=options)
 
     def verify_session(self, token: str) -> VerifiedIdentity | None:
@@ -89,6 +96,9 @@ class NeonJWTIdentityProvider:
             # Never log the bearer token or claims. The exception class is sufficient
             # to diagnose configuration/algorithm failures in an isolated rollout.
             LOGGER.warning("Managed identity verification failed (%s).", type(error).__name__)
+            return None
+        if str(claims.get("iss", "")).rstrip("/") != self.issuer:
+            LOGGER.warning("Managed identity verification failed (InvalidIssuerError).")
             return None
         subject = str(claims.get("sub", "")).strip()
         if not subject:

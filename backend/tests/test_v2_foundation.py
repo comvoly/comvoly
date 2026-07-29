@@ -148,12 +148,20 @@ class V2FoundationTests(unittest.TestCase):
         provider = NeonJWTIdentityProvider(
             "https://auth.example.test/.well-known/jwks.json",
             "https://auth.example.test",
-            decoder=lambda token: {"sub": "neon-user", "email": "member@example.test"}
+            decoder=lambda token: {"sub": "neon-user", "email": "member@example.test",
+                                   "iss": "https://auth.example.test/"}
             if token == "valid" else (_ for _ in ()).throw(ValueError("invalid")),
         )
         self.assertEqual("neon-user", provider.verify_session("valid").subject)
         self.assertIsNone(provider.verify_session("invalid"))
         self.assertIsNone(provider.verify_session(""))
+
+        wrong_issuer = NeonJWTIdentityProvider(
+            "https://auth.example.test/.well-known/jwks.json",
+            "https://auth.example.test",
+            decoder=lambda token: {"sub": "neon-user", "iss": "https://attacker.example"},
+        )
+        self.assertIsNone(wrong_issuer.verify_session("valid"))
 
     def test_registered_neon_account_starts_with_zero_workspace_access(self) -> None:
         identity = VerifiedIdentity("neon", "new-user", "New Member",
