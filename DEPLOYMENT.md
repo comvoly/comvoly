@@ -101,6 +101,13 @@ memberships, no workspaces and one registration audit event. The signed Neon iss
 the Auth host origin, while `NEON_AUTH_JWKS_URL` remains the full Auth URL plus
 `/.well-known/jwks.json`.
 
+The owner/member milestone was then deployed with
+`COMVOLY_V2_ALLOW_WORKSPACE_CREATION=true` in **v2-development only**. Live testing
+verified workspace creation, setup progress, draft source planning, expiring invitation
+creation, new-account acceptance, member-role presentation and removal of owner-only
+controls. Production retains its existing owner-password application and was not
+changed.
+
 The Cloudflare production-dependency audit currently reports three high-severity
 advisories in transitive Next.js build packages (`postcss` and `sharp`) and no critical
 advisories. This deployment publishes static assets only, so those packages are not in

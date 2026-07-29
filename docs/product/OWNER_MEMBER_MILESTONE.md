@@ -1,7 +1,7 @@
 # Owner workspace and invited-member milestone
 
-Status: implemented and locally verified on 29 July 2026; isolated development
-deployment and founder acceptance testing are the remaining release steps.
+Status: implemented, deployed and end-to-end verified in the isolated development
+environment on 29 July 2026; founder acceptance testing is ready.
 
 ## Outcome
 
@@ -65,6 +65,13 @@ Automated coverage includes:
 - managed-identity workspace-creation gating;
 - hashed invitation storage and invitation acceptance; and
 - the existing retrieval, jobs, export, media, usage and audit isolation suite.
+
+Live acceptance verification used two synthetic development accounts. The first
+created an empty workspace, added a credential-free Telegram planning record and
+generated a member invitation. The second registered through that invitation, received
+the `member` role and could see the workspace and planned source, but no setup, source
+management or invitation controls. A 390-pixel responsive check found no horizontal
+overflow. The synthetic workspace contains no imported community data.
 
 ## Explicitly deferred
 
