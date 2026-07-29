@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import logging
 import os
 from typing import Any, Callable, Mapping, Protocol
 
 from authorization import Principal
 from database import query, uses_postgres
 from v2_store import new_id, utc_now
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -81,7 +85,10 @@ class NeonJWTIdentityProvider:
             return None
         try:
             claims = dict((self._decoder or self._decode)(token))
-        except Exception:
+        except Exception as error:
+            # Never log the bearer token or claims. The exception class is sufficient
+            # to diagnose configuration/algorithm failures in an isolated rollout.
+            LOGGER.warning("Managed identity verification failed (%s).", type(error).__name__)
             return None
         subject = str(claims.get("sub", "")).strip()
         if not subject:
