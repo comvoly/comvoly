@@ -1,7 +1,8 @@
 # Founder Telegram history milestone
 
-Status: implemented and locally verified on 29 July 2026; isolated deployment and live
-synthetic acceptance testing remain. Real bot activation is externally gated.
+Status: implemented, locally verified, deployed to the isolated v2 environment and
+accepted through a live synthetic owner journey on 29 July 2026. Real bot activation
+is externally gated.
 
 ## Delivered scope
 
@@ -71,3 +72,9 @@ also cover preview validation, resumable/replayed chunks, normalised storage,
 owner-review completion, member rejection and cross-workspace job concealment.
 
 No real Telegram archive or credential is used by the automated suite.
+
+Live isolated acceptance confirmed that the owner UI previewed a synthetic Telegram
+Desktop export as 3 messages, 2 participants, 1 media reference and 1 service event;
+imported all 3 messages; moved the job to `owner_review`; and left the source paused
+pending bot activation. The isolated v2 API and unchanged production API both returned
+healthy after deployment.
