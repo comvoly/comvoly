@@ -54,6 +54,26 @@ replaces the older Pages flow for new static sites:
 First use the generated `workers.dev` URL. After the API is healthy, attach `comvoly.com`
 and `www.comvoly.com`, then redirect `comvoly.co.uk` to `https://comvoly.com`.
 
+## Isolated v2 Auth development
+
+Do not add these values to the live Railway or Cloudflare production environments.
+For an isolated development deployment only:
+
+- frontend: `NEXT_PUBLIC_NEON_AUTH_URL` and the development API URL;
+- backend: `COMVOLY_IDENTITY_PROVIDER=neon`, the branch-specific
+  `NEON_AUTH_ISSUER` and `NEON_AUTH_JWKS_URL`, and optionally
+  `NEON_AUTH_AUDIENCE`;
+- backend gates: `COMVOLY_ENABLE_V2_SCHEMA=true`, `COMVOLY_ENABLE_V2_API=true`, and
+  `COMVOLY_V2_SELF_REGISTRATION=true`.
+
+Keep `COMVOLY_V2_ALLOW_WORKSPACE_CREATION=false`. Owner creation is a separate approval
+and commercial-entitlement decision; ordinary registration must not imply ownership.
+
+A verified new identity creates an `accounts` and `linked_identities` record only. It
+does not create a membership, workspace, source or entitlement. Community access starts
+only when an owner invitation is accepted or an authorised administrator explicitly
+adds a membership.
+
 ## Private-pilot access
 
 Create Cloudflare Access self-hosted applications for `comvoly.com` and

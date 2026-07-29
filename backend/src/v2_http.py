@@ -7,6 +7,13 @@ import os
 from typing import Any, Mapping
 
 from authorization import Principal
+from identity_provider import (
+    AccountNotProvisioned,
+    AccountResolver,
+    DatabaseAccountResolver,
+    IdentityProvider,
+    NeonJWTIdentityProvider,
+)
 from workspace_application import ApplicationError, WorkspaceApplication
 
 
@@ -30,14 +37,35 @@ def development_principal(headers: Mapping[str, str]) -> Principal | None:
 
 
 class V2HTTPAdapter:
-    def __init__(self, connection: Any):
+    def __init__(self, connection: Any, identity_provider: IdentityProvider | None = None,
+                 account_resolver: AccountResolver | None = None):
+        provider_name = os.getenv("COMVOLY_IDENTITY_PROVIDER", "").strip().lower()
+        self.identity_provider = identity_provider
+        if self.identity_provider is None and provider_name == "neon":
+            self.identity_provider = NeonJWTIdentityProvider.from_environment()
+        self.managed_identity_enabled = self.identity_provider is not None
+        allow_registration = os.getenv("COMVOLY_V2_SELF_REGISTRATION", "false").lower() == "true"
+        self.account_resolver = account_resolver or DatabaseAccountResolver(
+            connection, allow_registration=allow_registration)
         self.application = WorkspaceApplication(connection)
+
+    def _principal(self, headers: Mapping[str, str]) -> Principal | None:
+        if self.identity_provider is not None:
+            token = headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            identity = self.identity_provider.verify_session(token)
+            if identity is None:
+                return None
+            return self.account_resolver.resolve_account(identity)
+        return development_principal(headers)
 
     def dispatch(self, method: str, path: str, payload: dict[str, Any],
                  headers: Mapping[str, str]) -> tuple[int, object]:
         if not v2_api_enabled():
             return 404, {"detail": "Not found."}
-        principal = development_principal(headers)
+        try:
+            principal = self._principal(headers)
+        except AccountNotProvisioned as error:
+            return 403, {"detail": str(error)}
         if principal is None:
             return 401, {"detail": "A verified Comvoly account session is required."}
         try:
@@ -45,6 +73,9 @@ class V2HTTPAdapter:
             if method == "GET" and parts == ["v2", "session"]:
                 return 200, self.application.session(principal)
             if method == "POST" and parts == ["v2", "workspaces"]:
+                if (self.managed_identity_enabled and os.getenv(
+                        "COMVOLY_V2_ALLOW_WORKSPACE_CREATION", "false").lower() != "true"):
+                    return 403, {"detail": "Workspace creation requires Comvoly approval."}
                 return 201, self.application.create_workspace(principal, payload)
             if method == "POST" and parts == ["v2", "invitations", "accept"]:
                 return 200, self.application.accept_invitation(principal, str(payload.get("token", "")))
@@ -61,4 +92,3 @@ class V2HTTPAdapter:
             return error.status, {"detail": error.detail}
         except ValueError as error:
             return 400, {"detail": str(error)}
-

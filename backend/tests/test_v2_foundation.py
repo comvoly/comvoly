@@ -11,7 +11,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from authorization import AccessDenied, Principal
 from database import connect_database, create_schema
-from identity_provider import LocalTestIdentityProvider, VerifiedIdentity
+from identity_provider import (
+    AccountNotProvisioned,
+    DatabaseAccountResolver,
+    LocalTestIdentityProvider,
+    NeonJWTIdentityProvider,
+    VerifiedIdentity,
+)
 from job_security import InvalidJobIdentity, JobIdentity, authorise_job, sign_job, verify_job
 from v2_http import V2HTTPAdapter
 from v2_store import ComvolyStore, utc_now
@@ -137,6 +143,51 @@ class V2FoundationTests(unittest.TestCase):
         identity = VerifiedIdentity("test", "subject-1", "A Person", {})
         self.assertIsNone(LocalTestIdentityProvider().verify_session("unknown"))
         self.assertEqual(identity, LocalTestIdentityProvider({"token": identity}).verify_session("token"))
+
+    def test_neon_identity_verification_is_fail_closed(self) -> None:
+        provider = NeonJWTIdentityProvider(
+            "https://auth.example.test/.well-known/jwks.json",
+            "https://auth.example.test",
+            decoder=lambda token: {"sub": "neon-user", "email": "member@example.test"}
+            if token == "valid" else (_ for _ in ()).throw(ValueError("invalid")),
+        )
+        self.assertEqual("neon-user", provider.verify_session("valid").subject)
+        self.assertIsNone(provider.verify_session("invalid"))
+        self.assertIsNone(provider.verify_session(""))
+
+    def test_registered_neon_account_starts_with_zero_workspace_access(self) -> None:
+        identity = VerifiedIdentity("neon", "new-user", "New Member",
+                                    {"email": "new@example.test", "email_verified": True})
+        provider = LocalTestIdentityProvider({"neon-token": identity})
+        resolver = DatabaseAccountResolver(self.database, allow_registration=True)
+        adapter = V2HTTPAdapter(self.database, provider, resolver)
+
+        status, session = adapter.dispatch(
+            "GET", "/v2/session", {}, {"Authorization": "Bearer neon-token"})
+
+        self.assertEqual(200, status)
+        self.assertEqual([], session["workspaces"])
+        account_id = session["account_id"]
+        self.assertEqual(0, self.database.execute(
+            "SELECT COUNT(*) FROM memberships WHERE account_id=?", (account_id,)).fetchone()[0])
+        self.assertEqual(404, adapter.dispatch(
+            "GET", "/v2/workspaces/ws_a", {}, {"Authorization": "Bearer neon-token"})[0])
+        self.assertEqual(403, adapter.dispatch(
+            "POST", "/v2/workspaces", {"name": "Unapproved", "handle": "unapproved"},
+            {"Authorization": "Bearer neon-token"})[0])
+
+    def test_unapproved_valid_identity_is_denied_when_registration_is_closed(self) -> None:
+        identity = VerifiedIdentity("neon", "unapproved", "Unapproved", {})
+        adapter = V2HTTPAdapter(
+            self.database,
+            LocalTestIdentityProvider({"valid-token": identity}),
+            DatabaseAccountResolver(self.database, allow_registration=False),
+        )
+        status, _ = adapter.dispatch(
+            "GET", "/v2/session", {}, {"Authorization": "Bearer valid-token"})
+        self.assertEqual(403, status)
+        with self.assertRaises(AccountNotProvisioned):
+            DatabaseAccountResolver(self.database, False).resolve_account(identity)
 
     def test_export_manifest_contains_only_authorised_workspace(self) -> None:
         self._add_content()

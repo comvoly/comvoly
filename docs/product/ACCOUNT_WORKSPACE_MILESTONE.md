@@ -86,10 +86,26 @@ project confirmed a more important product constraint: the current Neon Auth bet
 enables unrestricted web signup and states that restricted signup support is still
 coming. The empty test project was immediately deleted.
 
-This conflicts with the approved private-founder rollout. Neon Auth therefore remains
-disabled and no Auth URL, client configuration, user, production key, or public signup
-surface has been retained. Reassess Neon Auth when restricted signup is available, or
-approve a provider that supports invitation-only access before implementing an adapter.
+The founder subsequently approved unrestricted registration in an isolated development
+environment, provided a newly registered account receives **zero community access**.
+The implementation now includes:
+
+- branch-specific Neon JWT/JWKS verification with fixed allowed algorithms;
+- persistent mapping from a verified Neon subject to one Comvoly account;
+- self-registration behind `COMVOLY_V2_SELF_REGISTRATION`, defaulting off;
+- a zero-membership account home state; and
+- negative tests proving registration alone cannot open another workspace.
+
+The current beta Neon JavaScript SDK was evaluated and removed after its dependency
+audit reported a critical Better Auth advisory. The static frontend uses a minimal
+credentialed HTTPS client for the managed Auth endpoints instead; passwords remain
+handled by Neon, and the only credential sent to Comvoly's API is a short-lived JWT.
+The SDK should not be reintroduced until its published dependency tree passes review.
+
+The browser connection was unavailable when this integration slice was completed, so a
+replacement isolated Neon Auth project and its environment values still need to be
+created. No Auth URL, user or production configuration is currently active. Production
+registration and Auth remain a separate approval and rollout step.
 
 ## Decision required before activation
 
