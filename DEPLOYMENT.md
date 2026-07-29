@@ -74,6 +74,20 @@ does not create a membership, workspace, source or entitlement. Community access
 only when an owner invitation is accepted or an authorised administrator explicitly
 adds a membership.
 
+### Active isolated development deployment
+
+- Neon project: `comvoly-v2-development` (`morning-tree-70922570`)
+- Neon branch: `br-icy-glade-zac59aez`
+- Railway environment: `v2-development` (`06a69fbb-4e84-4dab-87bd-eeddbdcd5776`)
+- Railway API service: `0959bb6d-9939-4212-852c-aab1600d80c3`
+- Development API: `https://clever-miracle-v2-development.up.railway.app`
+- Development frontend Worker: `comvoly-v2-development`, configured by
+  `wrangler.development.jsonc`
+
+The Railway environment was created empty rather than duplicated from production, so it
+does not inherit the production database, Telegram session or OpenAI key. Telegram sync
+is disabled and Railway serverless sleeping is enabled to keep test usage low.
+
 ## Private-pilot access
 
 Create Cloudflare Access self-hosted applications for `comvoly.com` and

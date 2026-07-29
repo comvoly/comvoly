@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "comvoly-v2-development",
+  "compatibility_date": "2026-07-29",
+  "assets": {
+    "directory": "./frontend/out",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  }
+}
