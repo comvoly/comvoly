@@ -269,6 +269,56 @@ class V2FoundationTests(unittest.TestCase):
         self.assertEqual(201, status)
         count = self.database.execute("SELECT COUNT(*) FROM workspace_setup_steps WHERE workspace_id=?", (created["workspace_id"],)).fetchone()[0]
         self.assertEqual(5, count)
+        duplicate_status = adapter.dispatch("POST", "/v2/workspaces",
+            {"name": "Another Gamma", "handle": "gamma"}, headers)[0]
+        self.assertEqual(409, duplicate_status)
+
+    def test_workspace_overview_contains_only_scoped_setup_sources_and_imports(self) -> None:
+        adapter = V2HTTPAdapter(self.database)
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
+        status, overview = adapter.dispatch("GET", "/v2/workspaces/ws_a", {}, owner_headers)
+        self.assertEqual(200, status)
+        self.assertEqual(["src_a"], [source["id"] for source in overview["sources"]])
+        self.assertEqual(5, len(overview["setup_steps"]))
+        self.assertEqual([], overview["imports"])
+        self.assertNotIn("src_b", repr(overview))
+
+    def test_owner_can_plan_source_and_complete_setup_step(self) -> None:
+        adapter = V2HTTPAdapter(self.database)
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
+        status, source = adapter.dispatch("POST", "/v2/workspaces/ws_a/sources",
+            {"provider": "telegram", "display_name": "Alpha Telegram"}, owner_headers)
+        self.assertEqual(201, status)
+        row = self.database.execute("SELECT workspace_id, state FROM source_connections WHERE id=?",
+                                    (source["source_id"],)).fetchone()
+        self.assertEqual(("ws_a", "draft"), tuple(row))
+        status, step = adapter.dispatch("POST", "/v2/workspaces/ws_a/setup/community_details",
+            {"state": "completed"}, owner_headers)
+        self.assertEqual((200, "completed"), (status, step["state"]))
+
+    def test_member_cannot_manage_owner_setup_or_sources(self) -> None:
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        adapter = V2HTTPAdapter(self.database)
+        member_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_member"}
+        self.assertEqual(404, adapter.dispatch("POST", "/v2/workspaces/ws_a/sources",
+            {"provider": "discord", "display_name": "Forbidden"}, member_headers)[0])
+        self.assertEqual(404, adapter.dispatch("POST", "/v2/workspaces/ws_a/setup/community_details",
+            {"state": "completed"}, member_headers)[0])
+
+    def test_managed_identity_workspace_creation_remains_environment_gated(self) -> None:
+        identity = VerifiedIdentity("neon", "owner-subject", "Owner", {"sub": "owner-subject"})
+        provider = LocalTestIdentityProvider({"owner-token": identity})
+        resolver = DatabaseAccountResolver(self.database, allow_registration=True)
+        adapter = V2HTTPAdapter(self.database, provider, resolver)
+        headers = {"Authorization": "Bearer owner-token"}
+        with patch.dict("os.environ", {"COMVOLY_V2_ALLOW_WORKSPACE_CREATION": "false"}):
+            self.assertEqual(403, adapter.dispatch("POST", "/v2/workspaces",
+                {"name": "Owner workspace", "handle": "owner-workspace"}, headers)[0])
+        with patch.dict("os.environ", {"COMVOLY_V2_ALLOW_WORKSPACE_CREATION": "true"}):
+            status, created = adapter.dispatch("POST", "/v2/workspaces",
+                {"name": "Owner workspace", "handle": "owner-workspace"}, headers)
+            self.assertEqual(201, status)
+            self.assertTrue(created["workspace_id"].startswith("ws_"))
 
 
 if __name__ == "__main__":

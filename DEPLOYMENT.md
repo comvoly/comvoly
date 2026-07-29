@@ -69,6 +69,12 @@ For an isolated development deployment only:
 Keep `COMVOLY_V2_ALLOW_WORKSPACE_CREATION=false`. Owner creation is a separate approval
 and commercial-entitlement decision; ordinary registration must not imply ownership.
 
+For the isolated owner/member acceptance milestone only, this gate may be set to
+`true`. It lets any authenticated development account create its own empty workspace;
+it does not grant access to any existing workspace, connect a platform or start an
+import. Keep it `false` in production until entitlement and pilot admission are
+implemented.
+
 A verified new identity creates an `accounts` and `linked_identities` record only. It
 does not create a membership, workspace, source or entitlement. Community access starts
 only when an owner invitation is accepted or an authorised administrator explicitly

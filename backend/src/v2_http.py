@@ -87,6 +87,11 @@ class V2HTTPAdapter:
                     return 200, {"members": self.application.members(principal, workspace_id)}
                 if method == "POST" and parts[3:] == ["invitations"]:
                     return 201, self.application.invite(principal, workspace_id, payload)
+                if method == "POST" and parts[3:] == ["sources"]:
+                    return 201, self.application.create_source(principal, workspace_id, payload)
+                if method == "POST" and len(parts) == 5 and parts[3] == "setup":
+                    return 200, self.application.update_setup_step(
+                        principal, workspace_id, parts[4], payload)
             return 404, {"detail": "Not found."}
         except ApplicationError as error:
             return error.status, {"detail": error.detail}

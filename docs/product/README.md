@@ -27,14 +27,15 @@ For phone review, open the consolidated
 8. [Decisions, assumptions, and risks](DECISIONS_AND_RISKS.md)
 9. [Implemented secure foundation](IMPLEMENTATION_FOUNDATION.md)
 10. [Account and workspace milestone](ACCOUNT_WORKSPACE_MILESTONE.md)
+11. [Owner workspace and invited-member milestone](OWNER_MEMBER_MILESTONE.md)
 
 ## Package status
 
 | Area | Status | Main dependency |
 |---|---|---|
 | Product positioning and scope | Proposed decision | Founder review |
-| Owner and member journeys | Designed | Usability testing |
-| Account/workspace model | Specified | Identity-provider selection |
+| Owner and member journeys | Implemented in isolated development | Founder acceptance testing |
+| Account/workspace model | Implemented | Production identity rollout decision |
 | Telegram ongoing connection | Specified | Bot registration and policy review |
 | Telegram history import | Specified | Export fixture validation |
 | Discord connector | Feasible and specified | Test server and privileged intents |
