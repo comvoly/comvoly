@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 import sys
 import tempfile
 import unittest
@@ -319,6 +320,35 @@ class V2FoundationTests(unittest.TestCase):
                 {"name": "Owner workspace", "handle": "owner-workspace"}, headers)
             self.assertEqual(201, status)
             self.assertTrue(created["workspace_id"].startswith("ws_"))
+
+    def test_telegram_export_import_is_resumable_idempotent_and_workspace_scoped(self) -> None:
+        adapter = V2HTTPAdapter(self.database)
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
+        member_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_member"}
+        document = json.loads((Path(__file__).parent / "fixtures" / "telegram_small.json").read_text(encoding="utf-8"))
+        status, summary = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/preview",
+                                           {"export": document}, owner_headers)
+        self.assertEqual(200, status)
+        status, started = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/imports",
+            {"summary": summary, "idempotency_key": "fixture-import"}, owner_headers)
+        self.assertEqual(201, status)
+        path = f"/v2/workspaces/ws_a/telegram/imports/{started['job_id']}/chunks"
+        payload = {"chunk_index": 0, "messages": document["messages"]}
+        status, progress = adapter.dispatch("POST", path, payload, owner_headers)
+        self.assertEqual((200, 3, False), (status, progress["progress_current"], progress["duplicate"]))
+        status, replay = adapter.dispatch("POST", path, payload, owner_headers)
+        self.assertEqual((200, 3, True), (status, replay["progress_current"], replay["duplicate"]))
+        content = self.database.execute("SELECT external_item_id, workspace_id FROM content_items WHERE source_connection_id=? ORDER BY external_item_id",
+                                        (started["source_id"],)).fetchall()
+        self.assertEqual([("2", "ws_a"), ("3", "ws_a"), ("4", "ws_a")], [tuple(row) for row in content])
+        complete_path = f"/v2/workspaces/ws_a/telegram/imports/{started['job_id']}/complete"
+        status, completed = adapter.dispatch("POST", complete_path, {}, owner_headers)
+        self.assertEqual((200, "owner_review"), (status, completed["state"]))
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        self.assertEqual(404, adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/preview",
+            {"export": document}, member_headers)[0])
+        self.assertEqual(404, adapter.dispatch("POST", f"/v2/workspaces/ws_b/telegram/imports/{started['job_id']}/complete",
+            {}, owner_headers)[0])
 
 
 if __name__ == "__main__":

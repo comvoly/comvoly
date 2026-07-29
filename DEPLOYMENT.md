@@ -108,6 +108,18 @@ creation, new-account acceptance, member-role presentation and removal of owner-
 controls. Production retains its existing owner-password application and was not
 changed.
 
+### Telegram Desktop history import
+
+The v2 development API accepts a Telegram Desktop `result.json` through the
+workspace-authorised preview/start/chunk/complete endpoints. The frontend limits the
+pilot file to 25 MiB, while `COMVOLY_MAX_JSON_BYTES` defaults to 30 MiB. Each batch is
+checkpointed and duplicate message IDs are upserted within one Telegram source.
+
+This import currently stores message text and metadata plus a media-path inventory; it
+does not upload the media directory. Do not configure a bot token in this environment
+until the bot registration, webhook secret, least-privilege permissions, community
+notice and platform/data-processing review are approved.
+
 The Cloudflare production-dependency audit currently reports three high-severity
 advisories in transitive Next.js build packages (`postcss` and `sharp`) and no critical
 advisories. This deployment publishes static assets only, so those packages are not in

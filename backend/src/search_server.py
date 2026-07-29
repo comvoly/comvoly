@@ -29,6 +29,11 @@ DATABASE_PATH = PROJECT_DIR / "data" / "comvoly.db"
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))
 ALLOWED_ORIGIN = os.getenv("COMVOLY_WEB_ORIGIN", "http://localhost:3000")
+MAX_JSON_BYTES = int(os.getenv("COMVOLY_MAX_JSON_BYTES", str(30 * 1024 * 1024)))
+
+
+class RequestTooLarge(ValueError):
+    pass
 
 
 def status_summary() -> dict[str, object]:
@@ -138,6 +143,8 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
 
     def read_json(self) -> dict[str, object]:
         length = int(self.headers.get("Content-Length", "0"))
+        if length > MAX_JSON_BYTES:
+            raise RequestTooLarge("The request exceeds the configured JSON upload limit.")
         return json.loads(self.rfile.read(length) or b"{}")
 
     def do_OPTIONS(self) -> None:  # noqa: N802
@@ -184,6 +191,8 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
         if path.startswith("/v2/"):
             try:
                 self.v2_request("POST", path, self.read_json())
+            except RequestTooLarge as error:
+                self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"detail": str(error)})
             except (json.JSONDecodeError, UnicodeDecodeError):
                 self.send_json(HTTPStatus.BAD_REQUEST, {"detail": "Invalid JSON request."})
             return

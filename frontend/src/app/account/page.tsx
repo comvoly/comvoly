@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { api, ComvolySession, WorkspaceDetail, WorkspaceSummary } from "@/lib/comvoly-api";
 import { AuthSession, getIdentityToken, getSession, signIn, signOut, signUp } from "@/lib/neon-auth";
 
 const AUTH_URL = process.env.NEXT_PUBLIC_NEON_AUTH_URL;
 const API_URL = process.env.NEXT_PUBLIC_COMVOLY_API_URL || "https://api.comvoly.com";
+
+type TelegramPreview = {
+  parser_version: string; external_community_id: string; community_name: string; export_type: string;
+  message_count: number; service_event_count: number; participant_count: number; media_count: number;
+  history_start: string | null; history_end: string | null; warnings: string[];
+};
 
 export default function AccountPage() {
   if (!AUTH_URL) return <Shell><h1 className="text-3xl font-semibold">Development sign-in is not configured</h1><p className="mt-4 text-slate-400">Production access remains unchanged.</p></Shell>;
@@ -149,9 +155,70 @@ function Sources({ detail, token, refresh }: { detail: WorkspaceDetail; token: s
   return <div className="rounded-3xl border border-white/10 bg-white/[.035] p-6"><h3 className="text-lg font-semibold">Connected knowledge sources</h3><p className="mt-2 text-sm leading-6 text-slate-400">Connections are planning records only in this milestone. No platform credentials or messages are collected yet.</p>
     <div className="mt-5 space-y-3">{detail.sources.map((source) => <div key={source.id} className="flex items-center justify-between rounded-xl border border-white/10 px-4 py-3"><div><p className="font-medium">{source.display_name}</p><p className="mt-1 text-xs capitalize text-slate-500">{source.provider} · {source.state}</p></div><span className="rounded-full bg-slate-700 px-3 py-1 text-xs">Not connected</span></div>)}{!detail.sources.length && <p className="text-sm text-slate-500">No sources planned yet.</p>}</div>
     {canManage && <form className="mt-5 grid gap-3 sm:grid-cols-[9rem_1fr_auto]" onSubmit={async (event) => { event.preventDefault(); await api(API_URL, token, `/v2/workspaces/${detail.workspace.id}/sources`, { method: "POST", body: JSON.stringify({ provider, display_name: displayName }) }); setDisplayName(""); await refresh(); }}><select value={provider} onChange={(e) => setProvider(e.target.value)} className="rounded-xl border border-white/15 bg-[#061124] px-3 py-2 text-sm"><option value="telegram">Telegram</option><option value="discord">Discord</option><option value="skool">Skool</option></select><input required placeholder="Community or server name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="rounded-xl border border-white/15 bg-[#061124] px-3 py-2 text-sm" /><button className="rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold">Plan source</button></form>}
-    <div className="mt-6 border-t border-white/10 pt-5"><h4 className="font-medium">Historical imports</h4>{detail.imports.length ? detail.imports.map((job) => <p key={job.id} className="mt-3 text-sm text-slate-400">{job.job_type}: {job.stage} · {job.progress_current}/{job.progress_total ?? "?"}</p>) : <p className="mt-2 text-sm text-slate-500">Import progress will appear here once an approved connector is available.</p>}</div>
+    {canManage && <TelegramHistoryImport detail={detail} token={token} refresh={refresh} />}
+    <div className="mt-6 border-t border-white/10 pt-5"><h4 className="font-medium">Import history</h4>{detail.imports.length ? detail.imports.map((job) => <div key={job.id} className="mt-3 rounded-xl bg-[#061124] p-3 text-sm text-slate-300"><div className="flex justify-between gap-3"><span className="capitalize">{job.stage.replace("_", " ")}</span><span>{job.progress_current}/{job.progress_total ?? "?"}</span></div>{job.warning_count + job.failure_count > 0 && <p className="mt-2 text-xs text-amber-200">{job.warning_count} warnings · {job.failure_count} failures</p>}</div>) : <p className="mt-2 text-sm text-slate-500">No historical imports yet.</p>}</div>
   </div>;
 }
+
+function TelegramHistoryImport({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
+  const [document, setDocument] = useState<Record<string, unknown> | null>(null);
+  const [preview, setPreview] = useState<TelegramPreview | null>(null);
+  const [fileName, setFileName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [error, setError] = useState("");
+  const telegramSource = detail.sources.find((source) => source.provider === "telegram");
+
+  async function chooseFile(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setError(""); setPreview(null); setDocument(null); setFileName(file.name);
+    if (file.size > 25 * 1024 * 1024) { setError("This browser pilot accepts result.json files up to 25 MB."); return; }
+    try {
+      const parsed = JSON.parse(await file.text()) as Record<string, unknown>;
+      const result = await api<TelegramPreview>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/preview`, {
+        method: "POST", body: JSON.stringify({ export: parsed }),
+      });
+      setDocument(parsed); setPreview(result);
+    } catch (e) { setError(e instanceof Error ? e.message : "That Telegram export could not be read."); }
+  }
+
+  async function importHistory() {
+    if (!document || !preview || !Array.isArray(document.messages)) return;
+    setBusy(true); setError(""); setProgress(0);
+    try {
+      const started = await api<{ job_id: string; source_id: string }>(API_URL, token,
+        `/v2/workspaces/${detail.workspace.id}/telegram/imports`, {
+          method: "POST", body: JSON.stringify({ summary: preview, source_id: telegramSource?.id,
+            idempotency_key: `browser-${crypto.randomUUID()}` }),
+        });
+      const chunks: unknown[][] = [];
+      for (let index = 0; index < document.messages.length; index += 200) chunks.push(document.messages.slice(index, index + 200));
+      for (let index = 0; index < chunks.length; index += 1) {
+        const result = await api<{ progress_current: number }>(API_URL, token,
+          `/v2/workspaces/${detail.workspace.id}/telegram/imports/${started.job_id}/chunks`, {
+            method: "POST", body: JSON.stringify({ chunk_index: index, messages: chunks[index] }),
+          });
+        setProgress(result.progress_current);
+      }
+      await api(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/imports/${started.job_id}/complete`, { method: "POST", body: "{}" });
+      setProgress(preview.message_count); await refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : "The import stopped safely and can be retried."); }
+    finally { setBusy(false); }
+  }
+
+  return <div className="mt-7 border-t border-white/10 pt-6">
+    <Eyebrow>Telegram history</Eyebrow><h4 className="mt-2 text-lg font-semibold">Import the knowledge from before the bot joins</h4>
+    <p className="mt-2 text-sm leading-6 text-slate-400">In Telegram Desktop, export the intended group as machine-readable JSON and select its <code className="text-slate-300">result.json</code>. Comvoly inventories it before storing messages. Media files are counted but are not uploaded in this milestone.</p>
+    <label className="mt-4 block cursor-pointer rounded-2xl border border-dashed border-white/20 bg-[#061124] p-5 text-center text-sm hover:border-[#ffcf4a]/60"><span className="font-semibold text-[#ffcf4a]">Choose Telegram result.json</span><input type="file" accept="application/json,.json" onChange={chooseFile} className="sr-only" /></label>
+    {fileName && <p className="mt-2 text-xs text-slate-500">Selected: {fileName}</p>}{error && <p className="mt-3 rounded-xl bg-rose-400/10 p-3 text-sm text-rose-200">{error}</p>}
+    {preview && <div className="mt-5 rounded-2xl border border-white/10 bg-[#061124] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{preview.community_name}</p><p className="mt-1 text-xs text-slate-500">{preview.export_type} · {preview.parser_version}</p></div><span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">Preview ready</span></div><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Messages" value={preview.message_count} /><Metric label="People" value={preview.participant_count} /><Metric label="Media refs" value={preview.media_count} /><Metric label="Service events" value={preview.service_event_count} /></div><p className="mt-4 text-xs text-slate-500">{formatDate(preview.history_start)} – {formatDate(preview.history_end)}</p>{preview.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-amber-200">{warning}</p>)}<button disabled={busy} onClick={importHistory} className="mt-5 w-full rounded-xl bg-[#ffcf4a] px-4 py-3 font-bold text-[#07152b]">{busy ? `Importing ${progress}/${preview.message_count}…` : progress === preview.message_count && progress > 0 ? "Imported — ready for review" : `Import ${preview.message_count} messages`}</button></div>}
+    <div className="mt-5 rounded-2xl border border-white/10 p-4"><p className="font-medium">Ongoing Telegram updates</p><p className="mt-2 text-sm leading-6 text-slate-400">A branded Comvoly bot will collect new messages after it is added to the group. Bot creation, least-privilege permission verification and the member notice remain disabled until the official Telegram bot is registered.</p><button disabled className="mt-3 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-500">Bot activation not configured</button></div>
+  </div>;
+}
+
+function Metric({ label, value }: { label: string; value: number }) { return <div className="rounded-xl bg-white/[.04] p-3"><p className="text-lg font-semibold">{value.toLocaleString()}</p><p className="mt-1 text-xs text-slate-500">{label}</p></div>; }
+function formatDate(value: string | null) { return value ? new Date(value).toLocaleDateString("en-GB") : "Unknown date"; }
 
 function Invite({ workspaceId, token, setMessage, refresh }: { workspaceId: string; token: string; setMessage: (value: string) => void; refresh: () => Promise<void> }) {
   const [role, setRole] = useState("member"); const [email, setEmail] = useState(""); const [link, setLink] = useState("");

@@ -28,6 +28,7 @@ For phone review, open the consolidated
 9. [Implemented secure foundation](IMPLEMENTATION_FOUNDATION.md)
 10. [Account and workspace milestone](ACCOUNT_WORKSPACE_MILESTONE.md)
 11. [Owner workspace and invited-member milestone](OWNER_MEMBER_MILESTONE.md)
+12. [Founder Telegram history milestone](TELEGRAM_MILESTONE.md)
 
 ## Package status
 
@@ -36,8 +37,8 @@ For phone review, open the consolidated
 | Product positioning and scope | Proposed decision | Founder review |
 | Owner and member journeys | Implemented in isolated development | Founder acceptance testing |
 | Account/workspace model | Implemented | Production identity rollout decision |
-| Telegram ongoing connection | Specified | Bot registration and policy review |
-| Telegram history import | Specified | Export fixture validation |
+| Telegram ongoing connection | Guided boundary implemented | Bot registration and policy review |
+| Telegram history import | Implemented for JSON/text | Founder export and media acceptance |
 | Discord connector | Feasible and specified | Test server and privileged intents |
 | Skool connector | Conditional | Approved API/export access |
 | Media pipeline | Specified in stages | Storage/provider selection |

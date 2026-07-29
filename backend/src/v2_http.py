@@ -92,6 +92,18 @@ class V2HTTPAdapter:
                 if method == "POST" and len(parts) == 5 and parts[3] == "setup":
                     return 200, self.application.update_setup_step(
                         principal, workspace_id, parts[4], payload)
+                if method == "POST" and parts[3:] == ["telegram", "preview"]:
+                    return 200, self.application.preview_telegram_export(principal, workspace_id, payload)
+                if method == "POST" and parts[3:] == ["telegram", "imports"]:
+                    return 201, self.application.start_telegram_import(principal, workspace_id, payload)
+                if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
+                        and parts[6] == "chunks"):
+                    return 200, self.application.import_telegram_chunk(
+                        principal, workspace_id, parts[5], payload)
+                if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
+                        and parts[6] == "complete"):
+                    return 200, self.application.complete_telegram_import(
+                        principal, workspace_id, parts[5])
             return 404, {"detail": "Not found."}
         except ApplicationError as error:
             return error.status, {"detail": error.detail}

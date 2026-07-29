@@ -1,0 +1,11 @@
+{
+  "name": "Comvoly Fixture Group",
+  "type": "private_group",
+  "id": 424242,
+  "messages": [
+    {"id": 1, "type": "service", "date": "2026-01-01T09:00:00", "actor": "Owner", "action": "create_group"},
+    {"id": 2, "type": "message", "date": "2026-01-01T10:00:00", "from": "Owner", "from_id": "user1", "text": "Welcome to the community 👋"},
+    {"id": 3, "type": "message", "date": "2026-01-02T11:30:00+00:00", "edited": "2026-01-02T11:35:00+00:00", "from": "Member", "from_id": "user2", "reply_to_message_id": 2, "text": [{"type": "plain", "text": "Here is "}, {"type": "link", "text": "the guide"}], "file": "files/guide.pdf", "mime_type": "application/pdf"},
+    {"id": 4, "type": "message", "date_unixtime": "1767355200", "from": "Owner", "from_id": "user1", "text": "A later decision"}
+  ]
+}
