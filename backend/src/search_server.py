@@ -119,7 +119,7 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
         self.send_header("Access-Control-Allow-Credentials", "true")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Comvoly-Account-Id")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Cache-Control", "no-store")
         for name, value in (extra_headers or {}).items():
@@ -151,6 +151,9 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
         if request.path == "/auth/session":
             self.send_json(HTTPStatus.OK, {"authenticated": self.authenticated(), "setup_required": not authentication_configured()})
             return
+        if request.path.startswith("/v2/"):
+            self.v2_request("GET", request.path, {})
+            return
         if not self.require_authentication():
             return
         if request.path == "/status":
@@ -178,6 +181,12 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        if path.startswith("/v2/"):
+            try:
+                self.v2_request("POST", path, self.read_json())
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                self.send_json(HTTPStatus.BAD_REQUEST, {"detail": "Invalid JSON request."})
+            return
         if path == "/auth/login":
             self.login()
             return
@@ -224,6 +233,14 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
 
     def secure_cookies(self) -> bool:
         return os.getenv("COMVOLY_SECURE_COOKIES", "false").lower() == "true"
+
+    def v2_request(self, method: str, path: str, payload: dict[str, object]) -> None:
+        from v2_http import V2HTTPAdapter
+
+        headers = {name: self.headers.get(name, "") for name in ("Authorization", "X-Comvoly-Account-Id")}
+        with connect_database(DATABASE_PATH) as database:
+            status, response = V2HTTPAdapter(database).dispatch(method, path, payload, headers)
+        self.send_json(HTTPStatus(status), response)
 
     def login(self) -> None:
         try:

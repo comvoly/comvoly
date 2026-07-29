@@ -13,6 +13,7 @@ from authorization import AccessDenied, Principal
 from database import connect_database, create_schema
 from identity_provider import LocalTestIdentityProvider, VerifiedIdentity
 from job_security import InvalidJobIdentity, JobIdentity, authorise_job, sign_job, verify_job
+from v2_http import V2HTTPAdapter
 from v2_store import ComvolyStore, utc_now
 
 
@@ -21,7 +22,9 @@ class V2FoundationTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name) / "foundation.db"
         self.environment = patch.dict("os.environ", {
-            "DATABASE_URL": "", "COMVOLY_ENABLE_V2_SCHEMA": "true"
+            "DATABASE_URL": "", "COMVOLY_ENABLE_V2_SCHEMA": "true",
+            "COMVOLY_ENABLE_V2_API": "true", "COMVOLY_V2_DEV_AUTH": "true",
+            "COMVOLY_V2_DEV_SECRET": "a-long-local-development-secret"
         })
         self.environment.start()
         self.database_context = connect_database(self.path)
@@ -56,8 +59,11 @@ class V2FoundationTests(unittest.TestCase):
         create_schema(self.database)
         tables = {row[0] for row in self.database.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertTrue({"communities", "accounts", "workspaces", "content_items", "import_jobs", "audit_events"}.issubset(tables))
-        migrations = self.database.execute("SELECT version, name FROM schema_migrations").fetchall()
-        self.assertEqual([(1, "v2_secure_multi_community_foundation")], [tuple(row) for row in migrations])
+        migrations = self.database.execute("SELECT version, name FROM schema_migrations ORDER BY version").fetchall()
+        self.assertEqual(
+            [(1, "v2_secure_multi_community_foundation"), (2, "v2_account_workspace_experience")],
+            [tuple(row) for row in migrations],
+        )
 
     def test_account_can_hold_multiple_workspace_memberships(self) -> None:
         self.store.add_membership(self.context_a, self.member.account_id, "member")
@@ -167,6 +173,43 @@ class V2FoundationTests(unittest.TestCase):
             verify_job(token, secret, now=2_001)
         with self.assertRaises(InvalidJobIdentity):
             authorise_job(self.database, JobIdentity(job_id, "ws_b", "src_a", 2_000))
+
+    def test_http_adapter_requires_verified_session_and_hides_other_workspace(self) -> None:
+        adapter = V2HTTPAdapter(self.database)
+        self.assertEqual(401, adapter.dispatch("GET", "/v2/session", {}, {})[0])
+        headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
+        status, session = adapter.dispatch("GET", "/v2/session", {}, headers)
+        self.assertEqual(200, status)
+        self.assertEqual(["ws_a"], [item["id"] for item in session["workspaces"]])
+        self.assertEqual(404, adapter.dispatch("GET", "/v2/workspaces/ws_b", {}, headers)[0])
+
+    def test_http_adapter_is_closed_when_api_gate_is_disabled(self) -> None:
+        adapter = V2HTTPAdapter(self.database)
+        headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
+        with patch.dict("os.environ", {"COMVOLY_ENABLE_V2_API": "false"}):
+            self.assertEqual(404, adapter.dispatch("GET", "/v2/session", {}, headers)[0])
+
+    def test_invitation_acceptance_adds_workspace_without_exposing_token_in_database(self) -> None:
+        adapter = V2HTTPAdapter(self.database)
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
+        member_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_member"}
+        status, invitation = adapter.dispatch("POST", "/v2/workspaces/ws_a/invitations", {"role": "member"}, owner_headers)
+        self.assertEqual(201, status)
+        stored = self.database.execute("SELECT token_hash FROM workspace_invitations WHERE id=?", (invitation["invitation_id"],)).fetchone()
+        self.assertNotEqual(invitation["token"], stored[0])
+        status, accepted = adapter.dispatch("POST", "/v2/invitations/accept", {"token": invitation["token"]}, member_headers)
+        self.assertEqual(200, status)
+        self.assertEqual("ws_a", accepted["workspace_id"])
+        session = adapter.dispatch("GET", "/v2/session", {}, member_headers)[1]
+        self.assertEqual(["ws_a"], [item["id"] for item in session["workspaces"]])
+
+    def test_workspace_creation_initialises_owner_setup_steps(self) -> None:
+        adapter = V2HTTPAdapter(self.database)
+        headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
+        status, created = adapter.dispatch("POST", "/v2/workspaces", {"name": "Gamma", "handle": "gamma"}, headers)
+        self.assertEqual(201, status)
+        count = self.database.execute("SELECT COUNT(*) FROM workspace_setup_steps WHERE workspace_id=?", (created["workspace_id"],)).fetchone()[0]
+        self.assertEqual(5, count)
 
 
 if __name__ == "__main__":

@@ -137,7 +137,30 @@ V2_FOUNDATION = Migration(
     ),
 )
 
-MIGRATIONS = (V2_FOUNDATION,)
+ACCOUNT_EXPERIENCE = Migration(
+    2,
+    "v2_account_workspace_experience",
+    (
+        """CREATE TABLE IF NOT EXISTS workspace_invitations (
+            id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            invited_by_account_id TEXT NOT NULL REFERENCES accounts(id), email_hint TEXT,
+            intended_role TEXT NOT NULL CHECK (intended_role IN ('administrator','moderator','member')),
+            admission_method TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE,
+            state TEXT NOT NULL CHECK (state IN ('pending','accepted','revoked','expired')),
+            expires_at TEXT NOT NULL, accepted_by_account_id TEXT REFERENCES accounts(id),
+            accepted_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            UNIQUE(id, workspace_id))""",
+        """CREATE TABLE IF NOT EXISTS workspace_setup_steps (
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id), step_key TEXT NOT NULL,
+            state TEXT NOT NULL CHECK (state IN ('not_started','in_progress','completed','blocked','skipped')),
+            completed_by_account_id TEXT REFERENCES accounts(id), completed_at TEXT,
+            metadata_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL,
+            PRIMARY KEY(workspace_id, step_key))""",
+        "CREATE INDEX IF NOT EXISTS invitations_workspace_state ON workspace_invitations(workspace_id, state, expires_at)",
+    ),
+)
+
+MIGRATIONS = (V2_FOUNDATION, ACCOUNT_EXPERIENCE)
 
 
 def apply_migrations(connection: Any) -> None:

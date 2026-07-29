@@ -26,6 +26,7 @@ For phone review, open the consolidated
 7. [Pilot and implementation roadmap](PILOT_AND_ROADMAP.md)
 8. [Decisions, assumptions, and risks](DECISIONS_AND_RISKS.md)
 9. [Implemented secure foundation](IMPLEMENTATION_FOUNDATION.md)
+10. [Account and workspace milestone](ACCOUNT_WORKSPACE_MILESTONE.md)
 
 ## Package status
 

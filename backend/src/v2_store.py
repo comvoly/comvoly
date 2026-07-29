@@ -50,6 +50,10 @@ class ComvolyStore:
             (workspace_id, account_id, role, state, admission_method, approved_by_account_id,
              joined_at, created_at, updated_at) VALUES (?, ?, 'owner', 'active', 'created', ?, ?, ?, ?)"""),
             (workspace_id, owner.account_id, owner.account_id, now, now, now))
+        for step in ("community_details", "connect_source", "import_history", "review_knowledge", "invite_members"):
+            self.connection.execute(query("""INSERT INTO workspace_setup_steps
+                (workspace_id, step_key, state, updated_at) VALUES (?, ?, 'not_started', ?)"""),
+                (workspace_id, step, now))
         self._audit(workspace_id, owner.account_id, "workspace.created", "workspace", workspace_id)
         return workspace_id
 

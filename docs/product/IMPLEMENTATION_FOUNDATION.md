@@ -100,9 +100,9 @@ foreign-key rejection; signed worker identities; and the closed local identity a
 These require product UI work, external accounts, live-data approval, or material
 vendor/security decisions.
 
-## Next milestone
+## Following milestone
 
-Build the first end-to-end account and workspace experience against these boundaries:
-managed identity selection, account resolution, workspace switcher, owner setup, member
-invitation/approval, and authenticated v2 API routes. Do not expose a v2 route until its
+The safe account/workspace application and preview slice is now implemented and recorded
+in `ACCOUNT_WORKSPACE_MILESTONE.md`. Activation now depends on managed identity selection
+and an approved staged database rollout. Do not expose a production v2 route until its
 principal is resolved from a verified server-side session.
