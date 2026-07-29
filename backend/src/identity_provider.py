@@ -98,7 +98,8 @@ class NeonJWTIdentityProvider:
             LOGGER.warning("Managed identity verification failed (%s).", type(error).__name__)
             return None
         if str(claims.get("iss", "")).rstrip("/") != self.issuer:
-            LOGGER.warning("Managed identity verification failed (InvalidIssuerError).")
+            LOGGER.warning("Managed identity verification failed (InvalidIssuerError: %s).",
+                           str(claims.get("iss", ""))[:300])
             return None
         subject = str(claims.get("sub", "")).strip()
         if not subject:
