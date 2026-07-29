@@ -83,10 +83,23 @@ adds a membership.
 - Development API: `https://clever-miracle-v2-development.up.railway.app`
 - Development frontend Worker: `comvoly-v2-development`, configured by
   `wrangler.development.jsonc`
+- Development frontend: `https://comvoly-v2-development.stephen-hammond86.workers.dev`
 
 The Railway environment was created empty rather than duplicated from production, so it
 does not inherit the production database, Telegram session or OpenAI key. Telegram sync
 is disabled and Railway serverless sleeping is enabled to keep test usage low.
+
+On 29 July 2026 the deployed registration path was verified end to end with a synthetic
+account. The resulting database state was exactly one account, one linked identity, no
+memberships, no workspaces and one registration audit event. The signed Neon issuer is
+the Auth host origin, while `NEON_AUTH_JWKS_URL` remains the full Auth URL plus
+`/.well-known/jwks.json`.
+
+The Cloudflare production-dependency audit currently reports three high-severity
+advisories in transitive Next.js build packages (`postcss` and `sharp`) and no critical
+advisories. This deployment publishes static assets only, so those packages are not in
+the Worker runtime. npm's proposed automatic fix is an unsuitable major downgrade and
+must not be applied; reassess the dependency tree before a future framework upgrade.
 
 ## Private-pilot access
 

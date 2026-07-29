@@ -1,7 +1,7 @@
 # Account and workspace experience milestone
 
-Status: safe implementation slice and isolated PostgreSQL migration rehearsal complete
-on 29 July 2026; managed identity and live rollout remain closed.
+Status: safe implementation slice, isolated PostgreSQL migrations and isolated managed
+identity deployment verified on 29 July 2026; production rollout remains closed.
 
 ## Completed
 
@@ -116,9 +116,10 @@ free-tier Neon project:
 
 The development Auth URL is
 `https://ep-small-mountain-zaekbbuv.neonauth.c-2.eu-west-2.aws.neon.tech/neondb/auth`.
-Its issuer is the same URL and its JWKS URL appends
-`/.well-known/jwks.json`. These values are non-secret; the database connection string
-remains a secret and is not recorded here.
+Its signed-token issuer is
+`https://ep-small-mountain-zaekbbuv.neonauth.c-2.eu-west-2.aws.neon.tech` and its JWKS
+URL is the Auth URL with `/.well-known/jwks.json` appended. These values are
+non-secret; the database connection string remains a secret and is not recorded here.
 
 Registration is intentionally unrestricted only at the identity boundary. A verified
 new identity may create an `accounts` and `linked_identities` record when
@@ -129,6 +130,19 @@ by `COMVOLY_V2_ALLOW_WORKSPACE_CREATION=false`.
 No production branch, live data, Railway variable, Cloudflare deployment or
 `comvoly.com` authentication setting was changed. Production registration and Auth
 remain a separate approval and rollout step.
+
+The full isolated path was then verified through the deployed frontend and API:
+
+- a synthetic user registered and signed in through Neon Auth;
+- the API verified the signed EdDSA token and provisioned exactly one Comvoly account
+  and one linked identity;
+- the account page displayed the zero-community state;
+- direct database verification found zero memberships and zero workspaces; and
+- one `account.registered` audit event was written.
+
+This proves unrestricted identity registration does not grant community access. The
+synthetic account contains no community content and can be deleted during development
+environment housekeeping.
 
 ## Decision required before production activation
 
