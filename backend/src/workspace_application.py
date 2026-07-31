@@ -53,7 +53,8 @@ class WorkspaceApplication:
             WHEN 'review_knowledge' THEN 4 WHEN 'invite_members' THEN 5 ELSE 6 END"""),
             (workspace_id,)).fetchall()
         sources = self.store.connection.execute(query("""SELECT id, provider, display_name, state, health,
-            created_at, updated_at FROM source_connections WHERE workspace_id=? ORDER BY created_at"""),
+            created_at, updated_at FROM source_connections
+            WHERE workspace_id=? AND state <> 'revoked' ORDER BY created_at"""),
             (workspace_id,)).fetchall()
         imports = self.store.connection.execute(query("""SELECT id, source_connection_id, job_type, state,
             stage, progress_current, progress_total, warning_count, failure_count, updated_at
@@ -228,7 +229,8 @@ class WorkspaceApplication:
         if not display_name or len(display_name) > 120:
             raise ApplicationError(400, "Enter a Telegram group name of 1 to 120 characters.")
         source = self.store.connection.execute(query("""SELECT id FROM source_connections
-            WHERE workspace_id=? AND provider='telegram' ORDER BY created_at LIMIT 1"""),
+            WHERE workspace_id=? AND provider='telegram' AND state <> 'revoked'
+            ORDER BY created_at LIMIT 1"""),
             (workspace_id,)).fetchone()
         if source is None:
             source_id = self.store.create_source(
@@ -240,6 +242,28 @@ class WorkspaceApplication:
                 (display_name, utc_now(), source_id, workspace_id))
         self._mark_setup_step(context.account_id, workspace_id, "connect_source", "in_progress")
         return self.telegram_live.prepare(context, source_id)
+
+    def disconnect_telegram(self, principal: Principal, workspace_id: str,
+                            source_id: str) -> dict[str, Any]:
+        """Revoke a Telegram binding while retaining its historical knowledge."""
+        context = self._context(principal, workspace_id, "manage_sources")
+        source = self.store.connection.execute(query("""SELECT id FROM source_connections
+            WHERE id=? AND workspace_id=? AND provider='telegram' AND state <> 'revoked'"""),
+            (source_id, workspace_id)).fetchone()
+        if source is None:
+            raise ApplicationError(404, "Telegram connection not found.")
+        now = utc_now()
+        self.store.connection.execute(query("""UPDATE telegram_connection_configs
+            SET activation_state='revoked', receives_messages=0, updated_at=?
+            WHERE source_connection_id=? AND workspace_id=?"""),
+            (now, source_id, workspace_id))
+        self.store.connection.execute(query("""UPDATE source_connections
+            SET state='revoked', health='unknown', updated_at=?
+            WHERE id=? AND workspace_id=?"""), (now, source_id, workspace_id))
+        self.store._audit(workspace_id, context.account_id, "telegram.disconnected",
+                          "source_connection", source_id,
+                          metadata={"historical_knowledge_retained": True})
+        return {"source_id": source_id, "state": "revoked", "knowledge_retained": True}
 
     def telegram_live_status(self, principal: Principal, workspace_id: str,
                              source_id: str) -> dict[str, Any]:

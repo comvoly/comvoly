@@ -444,6 +444,23 @@ class V2FoundationTests(unittest.TestCase):
             self.assertEqual(404, adapter.dispatch("POST", "/v2/workspaces/ws_b/telegram/connect",
                 {"display_name": "Wrong workspace"}, owner_headers)[0])
 
+            disconnect = f"/v2/workspaces/ws_a/telegram/disconnect/{source_id}"
+            status, removed = adapter.dispatch("POST", disconnect, {}, owner_headers)
+            self.assertEqual((200, "revoked", True),
+                             (status, removed["state"], removed["knowledge_retained"]))
+            source_state = self.database.execute(
+                "SELECT state FROM source_connections WHERE id=?", (source_id,)).fetchone()[0]
+            binding_state = self.database.execute(
+                "SELECT activation_state FROM telegram_connection_configs WHERE source_connection_id=?",
+                (source_id,)).fetchone()[0]
+            self.assertEqual(("revoked", "revoked"), (source_state, binding_state))
+            self.assertEqual(404, adapter.dispatch("POST", disconnect, {}, owner_headers)[0])
+            self.assertEqual(404, adapter.dispatch("POST", disconnect, {}, member_headers)[0])
+            status, replacement = adapter.dispatch("POST", path,
+                {"display_name": "Fresh Group"}, owner_headers)
+            self.assertEqual(200, status)
+            self.assertNotEqual(source_id, replacement["source_id"])
+
     def test_telegram_live_ignores_wrong_chat_without_cross_workspace_content(self) -> None:
         self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")
         master = "telegram-test-master-key-longer-than-thirty-two-characters"

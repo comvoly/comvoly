@@ -30,6 +30,10 @@ and its global webhook is healthy; production remains unchanged.
 - Historical messages are a separate, optional follow-up so they do not obstruct the
   live connection journey. Creating sources, preparing links and manually refreshing
   status are implementation details rather than owner tasks.
+- Owners can remove an active or incomplete connection from the same screen. Removal
+  revokes its Telegram binding immediately and hides it from active setup while
+  retaining previously stored knowledge; destructive knowledge deletion remains a
+  separate future workflow requiring explicit confirmation.
 
 ## Cited intelligence pilot
 
