@@ -112,6 +112,8 @@ class V2HTTPAdapter:
                     return 201, self.application.start_telegram_import(principal, workspace_id, payload)
                 if method == "POST" and parts[3:] == ["telegram", "live", "prepare"]:
                     return 200, self.application.prepare_telegram_live(principal, workspace_id, payload)
+                if method == "POST" and parts[3:] == ["telegram", "connect"]:
+                    return 200, self.application.connect_telegram(principal, workspace_id, payload)
                 if (method == "GET" and len(parts) == 7 and
                         parts[3:6] == ["telegram", "live", "status"]):
                     return 200, self.application.telegram_live_status(

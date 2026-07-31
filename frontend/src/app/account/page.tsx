@@ -164,12 +164,48 @@ function SetupStep({ step, workspaceId, token, refresh }: { step: WorkspaceDetai
 }
 
 function Sources({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
-  const [provider, setProvider] = useState("telegram"); const [displayName, setDisplayName] = useState(""); const canManage = detail.capabilities.includes("manage_sources");
-  return <div className="rounded-3xl border border-white/10 bg-white/[.035] p-6"><h3 className="text-lg font-semibold">Connected knowledge sources</h3><p className="mt-2 text-sm leading-6 text-slate-400">Plan platform connections here. Telegram Desktop history can now be imported below; ongoing platform connections remain disabled until their credentials and permissions are approved.</p>
+  const canManage = detail.capabilities.includes("manage_sources");
+  return <div className="rounded-3xl border border-white/10 bg-white/[.035] p-6"><h3 className="text-lg font-semibold">Connect your community</h3><p className="mt-2 text-sm leading-6 text-slate-400">Add Comvoly to your Telegram group. New messages will become part of its private community knowledge.</p>
+    {canManage && <TelegramConnectWizard detail={detail} token={token} refresh={refresh} />}
     <div className="mt-5 space-y-3">{detail.sources.map((source) => <div key={source.id} className="flex items-center justify-between rounded-xl border border-white/10 px-4 py-3"><div><p className="font-medium">{source.display_name}</p><p className="mt-1 text-xs capitalize text-slate-500">{source.provider} · {source.state}</p></div><span className={`rounded-full px-3 py-1 text-xs ${source.state === "connected" ? "bg-emerald-400/10 text-emerald-200" : "bg-slate-700"}`}>{source.state === "connected" ? "Connected" : "Not connected"}</span></div>)}{!detail.sources.length && <p className="text-sm text-slate-500">No sources planned yet.</p>}</div>
-    {canManage && <form className="mt-5 grid gap-3 sm:grid-cols-[9rem_1fr_auto]" onSubmit={async (event) => { event.preventDefault(); await api(API_URL, token, `/v2/workspaces/${detail.workspace.id}/sources`, { method: "POST", body: JSON.stringify({ provider, display_name: displayName }) }); setDisplayName(""); await refresh(); }}><select value={provider} onChange={(e) => setProvider(e.target.value)} className="rounded-xl border border-white/15 bg-[#061124] px-3 py-2 text-sm"><option value="telegram">Telegram</option><option value="discord">Discord</option><option value="skool">Skool</option></select><input required placeholder="Community or server name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="rounded-xl border border-white/15 bg-[#061124] px-3 py-2 text-sm" /><button className="rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold">Plan source</button></form>}
-    {canManage && <TelegramHistoryImport detail={detail} token={token} refresh={refresh} />}
+    {canManage && <details className="mt-7 border-t border-white/10 pt-5"><summary className="cursor-pointer font-medium text-slate-200">Add earlier Telegram messages <span className="text-sm font-normal text-slate-500">(optional)</span></summary><TelegramHistoryImport detail={detail} token={token} refresh={refresh} /></details>}
+    <details className="mt-5 text-sm text-slate-400"><summary className="cursor-pointer">Other platforms</summary><p className="mt-3 leading-6">Discord and Skool connections are planned after the Telegram pilot.</p></details>
     <div className="mt-6 border-t border-white/10 pt-5"><h4 className="font-medium">Import history</h4>{detail.imports.length ? detail.imports.map((job) => <div key={job.id} className="mt-3 rounded-xl bg-[#061124] p-3 text-sm text-slate-300"><div className="flex justify-between gap-3"><span className="capitalize">{job.stage.replace("_", " ")}</span><span>{job.progress_current}/{job.progress_total ?? "?"}</span></div>{job.warning_count + job.failure_count > 0 && <p className="mt-2 text-xs text-amber-200">{job.warning_count} warnings · {job.failure_count} failures</p>}</div>) : <p className="mt-2 text-sm text-slate-500">No historical imports yet.</p>}</div>
+  </div>;
+}
+
+function TelegramConnectWizard({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
+  const source = detail.sources.find((item) => item.provider === "telegram");
+  const [name, setName] = useState(source?.display_name || "");
+  const [status, setStatus] = useState<TelegramLiveStatus | null>(null);
+  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    if (!source?.id) return;
+    const next = await api<TelegramLiveStatus>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/live/status/${source.id}`);
+    setStatus(next); if (next.state === "connected" && source.state !== "connected") await refresh();
+  }, [detail.workspace.id, refresh, source, token]);
+  useEffect(() => {
+    if (!source?.id || status?.state === "connected") return;
+    const initial = window.setTimeout(() => void load().catch((e: Error) => setError(e.message)), 0);
+    const timer = window.setInterval(() => void load().catch(() => undefined), 4000);
+    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+  }, [load, source?.id, status?.state]);
+  async function connect() {
+    setBusy(true); setError("");
+    try {
+      setStatus(await api<TelegramLiveStatus>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/connect`, { method: "POST", body: JSON.stringify({ display_name: name }) }));
+      await refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not start the Telegram connection."); }
+    finally { setBusy(false); }
+  }
+  const connected = source?.state === "connected" || status?.state === "connected";
+  return <div className="mt-6 rounded-2xl border border-[#ffcf4a]/25 bg-[#061124] p-5">
+    {connected ? <div className="flex items-start gap-3"><span className="mt-1 h-3 w-3 rounded-full bg-emerald-400" /><div><p className="font-semibold text-emerald-200">Telegram connected</p><p className="mt-1 text-sm text-slate-400">New messages are arriving automatically.</p></div></div> : <>
+      <p className="font-semibold">Connect Telegram</p><p className="mt-1 text-sm text-slate-400">Name the group, then choose it in Telegram. Comvoly handles the rest.</p>
+      {!status?.install_url && <div className="mt-4 flex flex-col gap-3 sm:flex-row"><input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="Telegram group name" className="flex-1 rounded-xl border border-white/15 bg-[#091a36] px-4 py-3 text-sm" /><button disabled={busy || !name.trim()} onClick={connect} className="rounded-xl bg-[#ffcf4a] px-5 py-3 font-bold text-[#07152b] disabled:opacity-50">{busy ? "Getting ready…" : source ? "Create a new connection" : "Connect Telegram"}</button></div>}
+      {status?.install_url && <div className="mt-4"><a href={status.install_url} target="_blank" rel="noreferrer" className="inline-flex rounded-xl bg-[#ffcf4a] px-5 py-3 font-bold text-[#07152b]">Choose your Telegram group</a><p className="mt-3 text-sm leading-6 text-slate-400">After Telegram adds ComvolyBot, send any normal message in the group. This page will confirm the connection automatically.</p></div>}
+      {source && status && !status.install_url && !connected && <p className="mt-3 text-xs text-slate-500">The previous private link is no longer shown. Create a new connection to continue.</p>}
+    </>}{error && <p className="mt-3 text-sm text-rose-200">{error}</p>}
   </div>;
 }
 
@@ -226,27 +262,6 @@ function TelegramHistoryImport({ detail, token, refresh }: { detail: WorkspaceDe
     <label className="mt-4 block cursor-pointer rounded-2xl border border-dashed border-white/20 bg-[#061124] p-5 text-center text-sm hover:border-[#ffcf4a]/60"><span className="font-semibold text-[#ffcf4a]">Choose Telegram result.json</span><input type="file" accept="application/json,.json" onChange={chooseFile} className="sr-only" /></label>
     {fileName && <p className="mt-2 text-xs text-slate-500">Selected: {fileName}</p>}{error && <p className="mt-3 rounded-xl bg-rose-400/10 p-3 text-sm text-rose-200">{error}</p>}
     {preview && <div className="mt-5 rounded-2xl border border-white/10 bg-[#061124] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{preview.community_name}</p><p className="mt-1 text-xs text-slate-500">{preview.export_type} · {preview.parser_version}</p></div><span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">Preview ready</span></div><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Messages" value={preview.message_count} /><Metric label="People" value={preview.participant_count} /><Metric label="Media refs" value={preview.media_count} /><Metric label="Service events" value={preview.service_event_count} /></div><p className="mt-4 text-xs text-slate-500">{formatDate(preview.history_start)} – {formatDate(preview.history_end)}</p>{preview.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-amber-200">{warning}</p>)}<button disabled={busy} onClick={importHistory} className="mt-5 w-full rounded-xl bg-[#ffcf4a] px-4 py-3 font-bold text-[#07152b]">{busy ? `Importing ${progress}/${preview.message_count}…` : progress === preview.message_count && progress > 0 ? "Imported — ready for review" : `Import ${preview.message_count} messages`}</button></div>}
-    <TelegramLiveSetup detail={detail} token={token} sourceId={telegramSource?.id || ""} />
-  </div>;
-}
-
-function TelegramLiveSetup({ detail, token, sourceId }: { detail: WorkspaceDetail; token: string; sourceId: string }) {
-  const [status, setStatus] = useState<TelegramLiveStatus | null>(null);
-  const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
-  const load = useCallback(async () => {
-    if (!sourceId) { setStatus(null); return; }
-    try { setStatus(await api<TelegramLiveStatus>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/live/status/${sourceId}`)); }
-    catch (e) { setError(e instanceof Error ? e.message : "Could not check the Telegram connection."); }
-  }, [detail.workspace.id, sourceId, token]);
-  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load]);
-  return <div className="mt-5 rounded-2xl border border-white/10 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium">Ongoing Telegram updates</p><p className="mt-1 text-xs capitalize text-slate-500">{status?.state?.replaceAll("_", " ") || (sourceId ? "Checking availability" : "Plan a Telegram source first")}</p></div>{status?.state === "connected" && <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">Receiving messages</span>}</div>
-    <p className="mt-3 text-sm leading-6 text-slate-400">The official Comvoly bot will collect messages posted after it joins. Historical knowledge remains covered by the export above.</p>
-    {status?.configured && ["not_prepared", "awaiting_bot"].includes(status.state) && !status.install_url && <button disabled={busy} onClick={async () => { setBusy(true); setError(""); try { const result = await api<TelegramLiveStatus>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/live/prepare`, { method: "POST", body: JSON.stringify({ source_id: sourceId }) }); setStatus(result); } catch (e) { setError(e instanceof Error ? e.message : "Could not prepare the Telegram connection."); } finally { setBusy(false); } }} className="mt-4 rounded-xl bg-[#ffcf4a] px-4 py-2 text-sm font-bold text-[#07152b]">{busy ? "Preparing…" : status.state === "awaiting_bot" ? "Create a new connection link" : "Create secure connection link"}</button>}
-    {status?.install_url && <div className="mt-4"><p className="mb-3 text-sm text-slate-400">Open this private link while signed into the Telegram account that administers the intended group. Telegram will add the bot and send the one-time binding code automatically.</p><a href={status.install_url} target="_blank" rel="noreferrer" className="inline-flex rounded-xl bg-[#ffcf4a] px-4 py-2 text-sm font-bold text-[#07152b]">Add @{status.bot_username} to Telegram</a></div>}
-    {status && !status.configured && <p className="mt-4 rounded-xl bg-white/[.04] p-3 text-sm text-slate-400">Ready for the official bot credentials. Comvoly will enable this control after BotFather registration and secure deployment configuration.</p>}
-    {status?.configured && status.state !== "not_prepared" && <button onClick={() => void load()} className="mt-4 rounded-xl border border-white/15 px-4 py-2 text-sm">Check connection</button>}
-    {status?.last_received_at && <p className="mt-3 text-xs text-slate-500">Last Telegram update: {formatDate(status.last_received_at)}</p>}
-    {error && <p className="mt-3 text-sm text-rose-200">{error}</p>}
   </div>;
 }
 

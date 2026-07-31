@@ -1,7 +1,7 @@
 # Telegram live pilot milestone
 
-Status: implementation complete behind the isolated v2 feature gates. The founder has
-registered `@ComvolyBot`; its token has not been shared with Comvoly or activated yet.
+Status: active in the isolated v2 development environment. `@ComvolyBot` is registered
+and its global webhook is healthy; production remains unchanged.
 
 ## Delivered
 
@@ -24,9 +24,12 @@ registered `@ComvolyBot`; its token has not been shared with Comvoly or activate
 - New and edited text/caption messages use the same platform-neutral spaces,
   conversations and content records as historical imports.
 - Connection preparation and first verified delivery create audit events.
-- The owner UI shows preparation, installation and connection state without exposing
-  secrets. Until the official bot is configured it accurately shows the external
-  registration boundary.
+- The owner UI reduces setup to one guided action: name the Telegram group, select it
+  in Telegram, then post a normal message. The source and one-time binding are created
+  behind that action and connection status is detected automatically.
+- Historical messages are a separate, optional follow-up so they do not obstruct the
+  live connection journey. Creating sources, preparing links and manually refreshing
+  status are implementation details rather than owner tasks.
 
 ## Cited intelligence pilot
 
@@ -53,19 +56,13 @@ Automated coverage verifies:
 - member cited answers are restricted to an active membership's workspace; and
 - an unauthorised workspace is concealed as not found.
 
-## External activation boundary
+## Pilot acceptance boundary
 
-Founder action is required for the following steps:
+Before broader access, the founder must:
 
-1. Store the existing `@ComvolyBot` token directly in the isolated Railway secret
-   manager. Never paste it
-   into chat, a browser form, a document or Git.
-2. Configure a separate random webhook master key and the official numeric bot user ID.
-3. Run the token-safe admin command to verify the bot identity and register the one
-   global webhook.
-4. Approve the member-facing pilot notice/privacy wording and confirm the selected test
+1. Approve the member-facing pilot notice/privacy wording and confirm the selected test
    group owner has authority to connect the group.
-5. Run a real test-group acceptance
+2. Run a real test-group acceptance
    before any broader pilot.
 
 Production remains unchanged. Do not add these values to the production Railway

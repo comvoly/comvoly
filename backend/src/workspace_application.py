@@ -218,6 +218,29 @@ class WorkspaceApplication:
             raise ApplicationError(503, "The official Comvoly Telegram bot has not been configured yet.")
         return self.telegram_live.prepare(context, str(payload.get("source_id", "")))
 
+    def connect_telegram(self, principal: Principal, workspace_id: str,
+                         payload: dict[str, Any]) -> dict[str, Any]:
+        """Create or reuse the Telegram source, then prepare it in one owner action."""
+        context = self._context(principal, workspace_id, "manage_sources")
+        if self.telegram_live is None:
+            raise ApplicationError(503, "The official Comvoly Telegram bot has not been configured yet.")
+        display_name = str(payload.get("display_name", "")).strip()
+        if not display_name or len(display_name) > 120:
+            raise ApplicationError(400, "Enter a Telegram group name of 1 to 120 characters.")
+        source = self.store.connection.execute(query("""SELECT id FROM source_connections
+            WHERE workspace_id=? AND provider='telegram' ORDER BY created_at LIMIT 1"""),
+            (workspace_id,)).fetchone()
+        if source is None:
+            source_id = self.store.create_source(
+                context, "telegram", f"pending:{new_id('external')}", display_name)
+        else:
+            source_id = str(source["id"])
+            self.store.connection.execute(query("""UPDATE source_connections SET display_name=?,
+                updated_at=? WHERE id=? AND workspace_id=?"""),
+                (display_name, utc_now(), source_id, workspace_id))
+        self._mark_setup_step(context.account_id, workspace_id, "connect_source", "in_progress")
+        return self.telegram_live.prepare(context, source_id)
+
     def telegram_live_status(self, principal: Principal, workspace_id: str,
                              source_id: str) -> dict[str, Any]:
         context = self._context(principal, workspace_id, "manage_sources")

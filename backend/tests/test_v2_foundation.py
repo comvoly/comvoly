@@ -416,6 +416,34 @@ class V2FoundationTests(unittest.TestCase):
             source = self.database.execute("SELECT state, health FROM source_connections WHERE id='src_a'").fetchone()
             self.assertEqual(("connected", "healthy"), tuple(source))
 
+    def test_telegram_connect_is_one_action_reuses_source_and_enforces_workspace_access(self) -> None:
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_a"}
+        member_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                          "X-Comvoly-Account-Id": "acct_member"}
+        with patch.dict("os.environ", {
+            "COMVOLY_TELEGRAM_WEBHOOK_MASTER_KEY": "telegram-test-master-key-longer-than-thirty-two-characters",
+            "COMVOLY_TELEGRAM_BOT_USER_ID": "9001",
+            "COMVOLY_TELEGRAM_BOT_USERNAME": "ComvolyTestBot",
+            "COMVOLY_PUBLIC_API_URL": "https://api.dev.example.test",
+        }):
+            adapter = V2HTTPAdapter(self.database)
+            path = "/v2/workspaces/ws_a/telegram/connect"
+            status, result = adapter.dispatch("POST", path, {"display_name": "Pilot Group"}, owner_headers)
+            self.assertEqual((200, "awaiting_bot"), (status, result["state"]))
+            self.assertIn("startgroup=", result["install_url"])
+            source_id = result["source_id"]
+            status, repeated = adapter.dispatch("POST", path, {"display_name": "Renamed Group"}, owner_headers)
+            self.assertEqual((200, source_id), (status, repeated["source_id"]))
+            rows = self.database.execute("""SELECT id, display_name FROM source_connections
+                WHERE workspace_id='ws_a' AND provider='telegram'""").fetchall()
+            self.assertEqual([(source_id, "Renamed Group")], [tuple(row) for row in rows])
+            self.store.add_membership(self.context_a, self.member.account_id, "member")
+            self.assertEqual(404, adapter.dispatch("POST", path,
+                {"display_name": "Forbidden"}, member_headers)[0])
+            self.assertEqual(404, adapter.dispatch("POST", "/v2/workspaces/ws_b/telegram/connect",
+                {"display_name": "Wrong workspace"}, owner_headers)[0])
+
     def test_telegram_live_ignores_wrong_chat_without_cross_workspace_content(self) -> None:
         self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")
         master = "telegram-test-master-key-longer-than-thirty-two-characters"
