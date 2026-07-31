@@ -145,6 +145,14 @@ stored in the database, frontend, repository, logs or chat. Migrations 3 and 4 a
 additive and apply automatically only where
 `COMVOLY_ENABLE_V2_SCHEMA=true`; production retains its existing schema gate.
 
+For the founder workstation, the repository includes a safer interactive wrapper. It
+prompts for the token and master key using hidden input, registers the isolated webhook
+and clears the temporary process environment afterwards:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File backend\tools\register_telegram_webhook.ps1
+```
+
 The Cloudflare production-dependency audit currently reports three high-severity
 advisories in transitive Next.js build packages (`postcss` and `sharp`) and no critical
 advisories. This deployment publishes static assets only, so those packages are not in
