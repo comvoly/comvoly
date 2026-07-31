@@ -191,7 +191,16 @@ TELEGRAM_LIVE_PILOT = Migration(
     ),
 )
 
-MIGRATIONS = (V2_FOUNDATION, ACCOUNT_EXPERIENCE, TELEGRAM_LIVE_PILOT)
+TELEGRAM_GLOBAL_WEBHOOK = Migration(
+    4,
+    "v2_telegram_global_webhook_binding",
+    (
+        "ALTER TABLE telegram_connection_configs ADD COLUMN activation_code_digest TEXT",
+        "CREATE INDEX IF NOT EXISTS telegram_activation_code ON telegram_connection_configs(activation_code_digest)",
+    ),
+)
+
+MIGRATIONS = (V2_FOUNDATION, ACCOUNT_EXPERIENCE, TELEGRAM_LIVE_PILOT, TELEGRAM_GLOBAL_WEBHOOK)
 
 
 def apply_migrations(connection: Any) -> None:

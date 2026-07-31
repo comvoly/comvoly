@@ -130,11 +130,19 @@ only** through Railway's secret/variable controls:
 - `COMVOLY_TELEGRAM_BOT_USER_ID=<official numeric bot ID>`
 - `COMVOLY_TELEGRAM_BOT_USERNAME=<official username without @>`
 - `COMVOLY_TELEGRAM_WEBHOOK_MASTER_KEY=<separate random value of at least 32 characters>`
+- `COMVOLY_TELEGRAM_BOT_TOKEN=<BotFather token; isolated secret only>`
 
-The BotFather token is intentionally not consumed by the web application yet. It will
-be needed only by the one-time webhook-registration operation, which must be added as a
-Railway secret and must never be stored in the database, frontend, repository or chat.
-Migration 3 is additive and applies automatically only where
+The running web API never reads or returns the BotFather token. The isolated admin
+command uses it only to verify the bot and register Telegram's single global webhook:
+
+```powershell
+python src/telegram_bot_admin.py register
+python src/telegram_bot_admin.py verify
+```
+
+Run those commands only in the isolated Railway environment. The token must never be
+stored in the database, frontend, repository, logs or chat. Migrations 3 and 4 are
+additive and apply automatically only where
 `COMVOLY_ENABLE_V2_SCHEMA=true`; production retains its existing schema gate.
 
 The Cloudflare production-dependency audit currently reports three high-severity

@@ -216,8 +216,7 @@ class WorkspaceApplication:
         context = self._context(principal, workspace_id, "manage_sources")
         if self.telegram_live is None:
             raise ApplicationError(503, "The official Comvoly Telegram bot has not been configured yet.")
-        return self.telegram_live.prepare(context, str(payload.get("source_id", "")),
-                                          str(payload.get("expected_chat_id", "")))
+        return self.telegram_live.prepare(context, str(payload.get("source_id", "")))
 
     def telegram_live_status(self, principal: Principal, workspace_id: str,
                              source_id: str) -> dict[str, Any]:

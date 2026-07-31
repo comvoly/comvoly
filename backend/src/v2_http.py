@@ -71,10 +71,10 @@ class V2HTTPAdapter:
         if not v2_api_enabled():
             return 404, {"detail": "Not found."}
         parts = [part for part in path.split("/") if part]
-        if method == "POST" and len(parts) == 4 and parts[:3] == ["v2", "telegram", "webhooks"]:
+        if method == "POST" and parts == ["v2", "telegram", "webhooks"]:
             try:
                 return self.telegram_live.receive(
-                    parts[3], headers.get("X-Telegram-Bot-Api-Secret-Token", ""), payload)
+                    headers.get("X-Telegram-Bot-Api-Secret-Token", ""), payload)
             except TelegramLiveError as error:
                 return error.status, {"detail": error.detail}
         try:

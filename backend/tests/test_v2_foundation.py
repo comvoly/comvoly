@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import unittest
+from urllib.parse import parse_qs, urlparse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -71,7 +72,8 @@ class V2FoundationTests(unittest.TestCase):
         self.assertEqual(
             [(1, "v2_secure_multi_community_foundation"),
              (2, "v2_account_workspace_experience"),
-             (3, "v2_telegram_live_pilot")],
+             (3, "v2_telegram_live_pilot"),
+             (4, "v2_telegram_global_webhook_binding")],
             [tuple(row) for row in migrations],
         )
 
@@ -355,6 +357,7 @@ class V2FoundationTests(unittest.TestCase):
 
     def test_telegram_live_webhook_is_secret_verified_idempotent_and_workspace_bound(self) -> None:
         self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")
+        self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_b'")
         owner_headers = {"Authorization": "Bearer a-long-local-development-secret",
                          "X-Comvoly-Account-Id": "acct_a"}
         other_headers = {"Authorization": "Bearer a-long-local-development-secret",
@@ -368,23 +371,37 @@ class V2FoundationTests(unittest.TestCase):
         }):
             adapter = V2HTTPAdapter(self.database)
             status, prepared = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/live/prepare",
-                {"source_id": "src_a", "expected_chat_id": "-10042"}, owner_headers)
+                {"source_id": "src_a"}, owner_headers)
             self.assertEqual((200, "awaiting_bot"), (status, prepared["state"]))
             self.assertNotIn("secret", repr(prepared).lower())
             self.assertEqual(404, adapter.dispatch("POST", "/v2/workspaces/ws_b/telegram/live/prepare",
-                {"source_id": "src_a", "expected_chat_id": "-10042"}, other_headers)[0])
+                {"source_id": "src_a"}, other_headers)[0])
+            prepared_b = adapter.dispatch("POST", "/v2/workspaces/ws_b/telegram/live/prepare",
+                {"source_id": "src_b"}, other_headers)[1]
 
-            webhook = "/v2/telegram/webhooks/src_a"
+            webhook = "/v2/telegram/webhooks"
             self.assertEqual(401, adapter.dispatch("POST", webhook, {"update_id": 1},
                 {"X-Telegram-Bot-Api-Secret-Token": "wrong"})[0])
             self.assertEqual(0, self.database.execute(
                 "SELECT COUNT(*) FROM telegram_webhook_events").fetchone()[0])
-            secret = derive_webhook_secret(master, "src_a")
+            secret = derive_webhook_secret(master)
+            code = parse_qs(urlparse(prepared["install_url"]).query)["startgroup"][0]
+            activation = {"update_id": 2, "message": {"message_id": 1,
+                "date": 1785484700, "chat": {"id": -10042, "type": "supergroup",
+                "title": "Pilot Group"}, "text": f"/start {code}"}}
+            self.assertEqual("verifying", adapter.dispatch("POST", webhook, activation,
+                {"X-Telegram-Bot-Api-Secret-Token": secret})[1]["state"])
+            bindings = self.database.execute("""SELECT source_connection_id, expected_chat_id
+                FROM telegram_connection_configs ORDER BY source_connection_id""").fetchall()
+            self.assertEqual([("src_a", "-10042"), ("src_b", "pending:src_b")],
+                             [tuple(row) for row in bindings])
+            self.assertNotEqual(code, parse_qs(urlparse(prepared_b["install_url"]).query)["startgroup"][0])
             membership = {"update_id": 2, "my_chat_member": {"chat": {"id": -10042},
                 "new_chat_member": {"status": "administrator"}}}
+            membership["update_id"] = 3
             self.assertEqual("verifying", adapter.dispatch("POST", webhook, membership,
                 {"X-Telegram-Bot-Api-Secret-Token": secret})[1]["state"])
-            message = {"update_id": 3, "message": {"message_id": 77, "date": 1785484800,
+            message = {"update_id": 4, "message": {"message_id": 77, "date": 1785484800,
                 "chat": {"id": -10042, "title": "Pilot Group"},
                 "from": {"id": 123, "first_name": "Pilot"}, "text": "alpha live advice"}}
             response = adapter.dispatch("POST", webhook, message,
@@ -407,12 +424,18 @@ class V2FoundationTests(unittest.TestCase):
             "COMVOLY_PUBLIC_API_URL": "https://api.dev.example.test"}):
             adapter = V2HTTPAdapter(self.database)
             owner_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
-            adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/live/prepare",
-                {"source_id": "src_a", "expected_chat_id": "-10042"}, owner_headers)
+            prepared = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/live/prepare",
+                {"source_id": "src_a"}, owner_headers)[1]
+            code = parse_qs(urlparse(prepared["install_url"]).query)["startgroup"][0]
+            secret = derive_webhook_secret(master)
+            adapter.dispatch("POST", "/v2/telegram/webhooks", {"update_id": 7,
+                "message": {"message_id": 1, "date": 1785484700,
+                "chat": {"id": -10042, "type": "group"}, "text": f"/start {code}"}},
+                {"X-Telegram-Bot-Api-Secret-Token": secret})
             update = {"update_id": 8, "message": {"message_id": 1, "date": 1785484800,
                 "chat": {"id": -999}, "text": "must not enter either workspace"}}
-            result = adapter.dispatch("POST", "/v2/telegram/webhooks/src_a", update,
-                {"X-Telegram-Bot-Api-Secret-Token": derive_webhook_secret(master, "src_a")})
+            result = adapter.dispatch("POST", "/v2/telegram/webhooks", update,
+                {"X-Telegram-Bot-Api-Secret-Token": secret})
             self.assertEqual((200, "ignored"), (result[0], result[1]["state"]))
             self.assertEqual(0, self.database.execute(
                 "SELECT COUNT(*) FROM content_items WHERE body_text LIKE '%must not%'").fetchone()[0])
