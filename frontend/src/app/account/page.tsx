@@ -14,6 +14,18 @@ type TelegramPreview = {
   history_start: string | null; history_end: string | null; warnings: string[];
 };
 
+type TelegramLiveStatus = {
+  source_id: string; state: string; configured: boolean; bot_username?: string;
+  membership_status?: string; receives_messages?: boolean; last_received_at?: string | null;
+  install_url?: string; webhook_url?: string;
+};
+
+type IntelligenceAnswer = {
+  question: string; answer: string; evidence_count: number; mode: string;
+  citations: Array<{ content_id: string; source_name: string; provider: string;
+    external_item_id: string; author: string; source_created_at: string; excerpt: string }>;
+};
+
 export default function AccountPage() {
   if (!AUTH_URL) return <Shell><h1 className="text-3xl font-semibold">Development sign-in is not configured</h1><p className="mt-4 text-slate-400">Production access remains unchanged.</p></Shell>;
   return <ConfiguredAccount authUrl={AUTH_URL} />;
@@ -140,6 +152,7 @@ function WorkspacePanel({ detail, token, refresh, setMessage }: { detail: Worksp
   return <div className="space-y-6">
     <div className="rounded-3xl border border-white/10 bg-white/[.035] p-6"><Eyebrow>{detail.role}</Eyebrow><h2 className="mt-2 text-3xl font-semibold">{detail.workspace.name}</h2><p className="mt-2 text-slate-400">{detail.workspace.lifecycle === "setup" ? "Setting up community intelligence" : detail.workspace.lifecycle}</p></div>
     {ownerTools && <div className="rounded-3xl border border-[#ffcf4a]/20 bg-[#ffcf4a]/[.04] p-6"><div className="flex items-center justify-between gap-4"><div><h3 className="text-lg font-semibold">Owner setup</h3><p className="mt-1 text-sm text-slate-400">{completed} of {detail.setup_steps.length} steps complete</p></div><span className="text-2xl font-bold text-[#ffcf4a]">{detail.setup_steps.length ? Math.round(completed / detail.setup_steps.length * 100) : 0}%</span></div><div className="mt-5 space-y-2">{detail.setup_steps.map((step) => <SetupStep key={step.step_key} step={step} workspaceId={detail.workspace.id} token={token} refresh={refresh} />)}</div></div>}
+    <WorkspaceIntelligencePanel detail={detail} token={token} />
     <Sources detail={detail} token={token} refresh={refresh} />
     {detail.capabilities.includes("invite_members") && <Invite workspaceId={detail.workspace.id} token={token} setMessage={setMessage} refresh={refresh} />}
   </div>;
@@ -153,7 +166,7 @@ function SetupStep({ step, workspaceId, token, refresh }: { step: WorkspaceDetai
 function Sources({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
   const [provider, setProvider] = useState("telegram"); const [displayName, setDisplayName] = useState(""); const canManage = detail.capabilities.includes("manage_sources");
   return <div className="rounded-3xl border border-white/10 bg-white/[.035] p-6"><h3 className="text-lg font-semibold">Connected knowledge sources</h3><p className="mt-2 text-sm leading-6 text-slate-400">Plan platform connections here. Telegram Desktop history can now be imported below; ongoing platform connections remain disabled until their credentials and permissions are approved.</p>
-    <div className="mt-5 space-y-3">{detail.sources.map((source) => <div key={source.id} className="flex items-center justify-between rounded-xl border border-white/10 px-4 py-3"><div><p className="font-medium">{source.display_name}</p><p className="mt-1 text-xs capitalize text-slate-500">{source.provider} · {source.state}</p></div><span className="rounded-full bg-slate-700 px-3 py-1 text-xs">Not connected</span></div>)}{!detail.sources.length && <p className="text-sm text-slate-500">No sources planned yet.</p>}</div>
+    <div className="mt-5 space-y-3">{detail.sources.map((source) => <div key={source.id} className="flex items-center justify-between rounded-xl border border-white/10 px-4 py-3"><div><p className="font-medium">{source.display_name}</p><p className="mt-1 text-xs capitalize text-slate-500">{source.provider} · {source.state}</p></div><span className={`rounded-full px-3 py-1 text-xs ${source.state === "connected" ? "bg-emerald-400/10 text-emerald-200" : "bg-slate-700"}`}>{source.state === "connected" ? "Connected" : "Not connected"}</span></div>)}{!detail.sources.length && <p className="text-sm text-slate-500">No sources planned yet.</p>}</div>
     {canManage && <form className="mt-5 grid gap-3 sm:grid-cols-[9rem_1fr_auto]" onSubmit={async (event) => { event.preventDefault(); await api(API_URL, token, `/v2/workspaces/${detail.workspace.id}/sources`, { method: "POST", body: JSON.stringify({ provider, display_name: displayName }) }); setDisplayName(""); await refresh(); }}><select value={provider} onChange={(e) => setProvider(e.target.value)} className="rounded-xl border border-white/15 bg-[#061124] px-3 py-2 text-sm"><option value="telegram">Telegram</option><option value="discord">Discord</option><option value="skool">Skool</option></select><input required placeholder="Community or server name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} className="rounded-xl border border-white/15 bg-[#061124] px-3 py-2 text-sm" /><button className="rounded-xl bg-white/10 px-4 py-2 text-sm font-semibold">Plan source</button></form>}
     {canManage && <TelegramHistoryImport detail={detail} token={token} refresh={refresh} />}
     <div className="mt-6 border-t border-white/10 pt-5"><h4 className="font-medium">Import history</h4>{detail.imports.length ? detail.imports.map((job) => <div key={job.id} className="mt-3 rounded-xl bg-[#061124] p-3 text-sm text-slate-300"><div className="flex justify-between gap-3"><span className="capitalize">{job.stage.replace("_", " ")}</span><span>{job.progress_current}/{job.progress_total ?? "?"}</span></div>{job.warning_count + job.failure_count > 0 && <p className="mt-2 text-xs text-amber-200">{job.warning_count} warnings · {job.failure_count} failures</p>}</div>) : <p className="mt-2 text-sm text-slate-500">No historical imports yet.</p>}</div>
@@ -213,7 +226,37 @@ function TelegramHistoryImport({ detail, token, refresh }: { detail: WorkspaceDe
     <label className="mt-4 block cursor-pointer rounded-2xl border border-dashed border-white/20 bg-[#061124] p-5 text-center text-sm hover:border-[#ffcf4a]/60"><span className="font-semibold text-[#ffcf4a]">Choose Telegram result.json</span><input type="file" accept="application/json,.json" onChange={chooseFile} className="sr-only" /></label>
     {fileName && <p className="mt-2 text-xs text-slate-500">Selected: {fileName}</p>}{error && <p className="mt-3 rounded-xl bg-rose-400/10 p-3 text-sm text-rose-200">{error}</p>}
     {preview && <div className="mt-5 rounded-2xl border border-white/10 bg-[#061124] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{preview.community_name}</p><p className="mt-1 text-xs text-slate-500">{preview.export_type} · {preview.parser_version}</p></div><span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">Preview ready</span></div><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Messages" value={preview.message_count} /><Metric label="People" value={preview.participant_count} /><Metric label="Media refs" value={preview.media_count} /><Metric label="Service events" value={preview.service_event_count} /></div><p className="mt-4 text-xs text-slate-500">{formatDate(preview.history_start)} – {formatDate(preview.history_end)}</p>{preview.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-amber-200">{warning}</p>)}<button disabled={busy} onClick={importHistory} className="mt-5 w-full rounded-xl bg-[#ffcf4a] px-4 py-3 font-bold text-[#07152b]">{busy ? `Importing ${progress}/${preview.message_count}…` : progress === preview.message_count && progress > 0 ? "Imported — ready for review" : `Import ${preview.message_count} messages`}</button></div>}
-    <div className="mt-5 rounded-2xl border border-white/10 p-4"><p className="font-medium">Ongoing Telegram updates</p><p className="mt-2 text-sm leading-6 text-slate-400">A branded Comvoly bot will collect new messages after it is added to the group. Bot creation, least-privilege permission verification and the member notice remain disabled until the official Telegram bot is registered.</p><button disabled className="mt-3 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-500">Bot activation not configured</button></div>
+    <TelegramLiveSetup detail={detail} token={token} sourceId={telegramSource?.id || ""} />
+  </div>;
+}
+
+function TelegramLiveSetup({ detail, token, sourceId }: { detail: WorkspaceDetail; token: string; sourceId: string }) {
+  const [status, setStatus] = useState<TelegramLiveStatus | null>(null);
+  const [chatId, setChatId] = useState(""); const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    if (!sourceId) { setStatus(null); return; }
+    try { setStatus(await api<TelegramLiveStatus>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/live/status/${sourceId}`)); }
+    catch (e) { setError(e instanceof Error ? e.message : "Could not check the Telegram connection."); }
+  }, [detail.workspace.id, sourceId, token]);
+  useEffect(() => { const timer = window.setTimeout(() => { void load(); }, 0); return () => window.clearTimeout(timer); }, [load]);
+  return <div className="mt-5 rounded-2xl border border-white/10 p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium">Ongoing Telegram updates</p><p className="mt-1 text-xs capitalize text-slate-500">{status?.state?.replaceAll("_", " ") || (sourceId ? "Checking availability" : "Plan a Telegram source first")}</p></div>{status?.state === "connected" && <span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">Receiving messages</span>}</div>
+    <p className="mt-3 text-sm leading-6 text-slate-400">The official Comvoly bot will collect messages posted after it joins. Historical knowledge remains covered by the export above.</p>
+    {status?.configured && status.state === "not_prepared" && <form className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto]" onSubmit={async (event) => { event.preventDefault(); setBusy(true); setError(""); try { const result = await api<TelegramLiveStatus>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/live/prepare`, { method: "POST", body: JSON.stringify({ source_id: sourceId, expected_chat_id: chatId }) }); setStatus(result); } catch (e) { setError(e instanceof Error ? e.message : "Could not prepare the Telegram connection."); } finally { setBusy(false); } }}><input required value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="Telegram group ID" className="rounded-xl border border-white/15 bg-[#061124] px-3 py-2 text-sm" /><button disabled={busy} className="rounded-xl bg-[#ffcf4a] px-4 py-2 text-sm font-bold text-[#07152b]">{busy ? "Preparing…" : "Prepare connection"}</button></form>}
+    {status?.install_url && <a href={status.install_url} target="_blank" rel="noreferrer" className="mt-4 inline-flex rounded-xl bg-[#ffcf4a] px-4 py-2 text-sm font-bold text-[#07152b]">Add @{status.bot_username} to Telegram</a>}
+    {status && !status.configured && <p className="mt-4 rounded-xl bg-white/[.04] p-3 text-sm text-slate-400">Ready for the official bot credentials. Comvoly will enable this control after BotFather registration and secure deployment configuration.</p>}
+    {status?.configured && status.state !== "not_prepared" && <button onClick={() => void load()} className="mt-4 rounded-xl border border-white/15 px-4 py-2 text-sm">Check connection</button>}
+    {status?.last_received_at && <p className="mt-3 text-xs text-slate-500">Last Telegram update: {formatDate(status.last_received_at)}</p>}
+    {error && <p className="mt-3 text-sm text-rose-200">{error}</p>}
+  </div>;
+}
+
+function WorkspaceIntelligencePanel({ detail, token }: { detail: WorkspaceDetail; token: string }) {
+  const [question, setQuestion] = useState(""); const [answer, setAnswer] = useState<IntelligenceAnswer | null>(null);
+  const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  return <div className="rounded-3xl border border-[#ffcf4a]/25 bg-[#ffcf4a]/[.035] p-6"><Eyebrow>Interpret community knowledge</Eyebrow><h3 className="mt-2 text-xl font-semibold">Ask {detail.workspace.name}</h3><p className="mt-2 text-sm leading-6 text-slate-400">Pilot answers use only this workspace and always show their supporting community messages.</p>
+    <form className="mt-5 flex flex-col gap-3 sm:flex-row" onSubmit={async (event) => { event.preventDefault(); setBusy(true); setError(""); setAnswer(null); try { setAnswer(await api<IntelligenceAnswer>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/intelligence/ask`, { method: "POST", body: JSON.stringify({ question }) })); } catch (e) { setError(e instanceof Error ? e.message : "Comvoly could not answer that question."); } finally { setBusy(false); } }}><textarea required maxLength={1000} value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="What has this community said about…?" className="min-h-24 flex-1 rounded-2xl border border-white/15 bg-[#061124] p-4 text-sm" /><button disabled={busy} className="rounded-2xl bg-[#ffcf4a] px-6 py-3 font-bold text-[#07152b]">{busy ? "Interpreting…" : "Ask Comvoly"}</button></form>
+    {error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
+    {answer && <div className="mt-5 border-t border-white/10 pt-5"><p className="leading-7 text-slate-100">{answer.answer}</p><p className="mt-2 text-xs text-slate-500">Checked against {answer.evidence_count} authorised messages · extractive pilot</p><div className="mt-4 space-y-3">{answer.citations.map((item) => <article key={item.content_id} className="rounded-xl bg-[#061124] p-4"><div className="flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span>{item.source_name} · {item.author}</span><span>Message {item.external_item_id}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{item.excerpt}</p></article>)}</div></div>}
   </div>;
 }
 

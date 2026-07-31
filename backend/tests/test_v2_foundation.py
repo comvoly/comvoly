@@ -20,6 +20,7 @@ from identity_provider import (
     VerifiedIdentity,
 )
 from job_security import InvalidJobIdentity, JobIdentity, authorise_job, sign_job, verify_job
+from telegram_live import derive_webhook_secret
 from v2_http import V2HTTPAdapter
 from v2_store import ComvolyStore, utc_now
 
@@ -68,7 +69,9 @@ class V2FoundationTests(unittest.TestCase):
         self.assertTrue({"communities", "accounts", "workspaces", "content_items", "import_jobs", "audit_events"}.issubset(tables))
         migrations = self.database.execute("SELECT version, name FROM schema_migrations ORDER BY version").fetchall()
         self.assertEqual(
-            [(1, "v2_secure_multi_community_foundation"), (2, "v2_account_workspace_experience")],
+            [(1, "v2_secure_multi_community_foundation"),
+             (2, "v2_account_workspace_experience"),
+             (3, "v2_telegram_live_pilot")],
             [tuple(row) for row in migrations],
         )
 
@@ -349,6 +352,85 @@ class V2FoundationTests(unittest.TestCase):
             {"export": document}, member_headers)[0])
         self.assertEqual(404, adapter.dispatch("POST", f"/v2/workspaces/ws_b/telegram/imports/{started['job_id']}/complete",
             {}, owner_headers)[0])
+
+    def test_telegram_live_webhook_is_secret_verified_idempotent_and_workspace_bound(self) -> None:
+        self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_a"}
+        other_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_b"}
+        master = "telegram-test-master-key-longer-than-thirty-two-characters"
+        with patch.dict("os.environ", {
+            "COMVOLY_TELEGRAM_WEBHOOK_MASTER_KEY": master,
+            "COMVOLY_TELEGRAM_BOT_USER_ID": "9001",
+            "COMVOLY_TELEGRAM_BOT_USERNAME": "ComvolyTestBot",
+            "COMVOLY_PUBLIC_API_URL": "https://api.dev.example.test",
+        }):
+            adapter = V2HTTPAdapter(self.database)
+            status, prepared = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/live/prepare",
+                {"source_id": "src_a", "expected_chat_id": "-10042"}, owner_headers)
+            self.assertEqual((200, "awaiting_bot"), (status, prepared["state"]))
+            self.assertNotIn("secret", repr(prepared).lower())
+            self.assertEqual(404, adapter.dispatch("POST", "/v2/workspaces/ws_b/telegram/live/prepare",
+                {"source_id": "src_a", "expected_chat_id": "-10042"}, other_headers)[0])
+
+            webhook = "/v2/telegram/webhooks/src_a"
+            self.assertEqual(401, adapter.dispatch("POST", webhook, {"update_id": 1},
+                {"X-Telegram-Bot-Api-Secret-Token": "wrong"})[0])
+            self.assertEqual(0, self.database.execute(
+                "SELECT COUNT(*) FROM telegram_webhook_events").fetchone()[0])
+            secret = derive_webhook_secret(master, "src_a")
+            membership = {"update_id": 2, "my_chat_member": {"chat": {"id": -10042},
+                "new_chat_member": {"status": "administrator"}}}
+            self.assertEqual("verifying", adapter.dispatch("POST", webhook, membership,
+                {"X-Telegram-Bot-Api-Secret-Token": secret})[1]["state"])
+            message = {"update_id": 3, "message": {"message_id": 77, "date": 1785484800,
+                "chat": {"id": -10042, "title": "Pilot Group"},
+                "from": {"id": 123, "first_name": "Pilot"}, "text": "alpha live advice"}}
+            response = adapter.dispatch("POST", webhook, message,
+                {"X-Telegram-Bot-Api-Secret-Token": secret})
+            self.assertEqual((200, "connected"), (response[0], response[1]["state"]))
+            duplicate = adapter.dispatch("POST", webhook, message,
+                {"X-Telegram-Bot-Api-Secret-Token": secret})
+            self.assertTrue(duplicate[1]["duplicate"])
+            stored = self.database.execute("""SELECT workspace_id, body_text, ingestion_method
+                FROM content_items WHERE source_connection_id='src_a' AND external_item_id='77'""").fetchone()
+            self.assertEqual(("ws_a", "alpha live advice", "telegram_bot_webhook"), tuple(stored))
+            source = self.database.execute("SELECT state, health FROM source_connections WHERE id='src_a'").fetchone()
+            self.assertEqual(("connected", "healthy"), tuple(source))
+
+    def test_telegram_live_ignores_wrong_chat_without_cross_workspace_content(self) -> None:
+        self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")
+        master = "telegram-test-master-key-longer-than-thirty-two-characters"
+        with patch.dict("os.environ", {"COMVOLY_TELEGRAM_WEBHOOK_MASTER_KEY": master,
+            "COMVOLY_TELEGRAM_BOT_USER_ID": "9001", "COMVOLY_TELEGRAM_BOT_USERNAME": "ComvolyTestBot",
+            "COMVOLY_PUBLIC_API_URL": "https://api.dev.example.test"}):
+            adapter = V2HTTPAdapter(self.database)
+            owner_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}
+            adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/live/prepare",
+                {"source_id": "src_a", "expected_chat_id": "-10042"}, owner_headers)
+            update = {"update_id": 8, "message": {"message_id": 1, "date": 1785484800,
+                "chat": {"id": -999}, "text": "must not enter either workspace"}}
+            result = adapter.dispatch("POST", "/v2/telegram/webhooks/src_a", update,
+                {"X-Telegram-Bot-Api-Secret-Token": derive_webhook_secret(master, "src_a")})
+            self.assertEqual((200, "ignored"), (result[0], result[1]["state"]))
+            self.assertEqual(0, self.database.execute(
+                "SELECT COUNT(*) FROM content_items WHERE body_text LIKE '%must not%'").fetchone()[0])
+
+    def test_workspace_cited_answers_are_member_accessible_and_tenant_isolated(self) -> None:
+        self._add_content()
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        adapter = V2HTTPAdapter(self.database)
+        member_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                          "X-Comvoly-Account-Id": "acct_member"}
+        status, answer = adapter.dispatch("POST", "/v2/workspaces/ws_a/intelligence/ask",
+            {"question": "What is the alpha secret?"}, member_headers)
+        self.assertEqual(200, status)
+        self.assertEqual(1, answer["evidence_count"])
+        self.assertEqual("alpha secret", answer["citations"][0]["excerpt"])
+        self.assertNotIn("beta secret", repr(answer))
+        self.assertEqual(404, adapter.dispatch("POST", "/v2/workspaces/ws_b/intelligence/ask",
+            {"question": "beta secret"}, member_headers)[0])
 
 
 if __name__ == "__main__":

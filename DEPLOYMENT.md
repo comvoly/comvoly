@@ -120,6 +120,23 @@ does not upload the media directory. Do not configure a bot token in this enviro
 until the bot registration, webhook secret, least-privilege permissions, community
 notice and platform/data-processing review are approved.
 
+### Telegram live pilot activation (not yet approved)
+
+The code path is implemented, but remains closed when its configuration is absent. Once
+the official bot and pilot notice are approved, add the following to **v2-development
+only** through Railway's secret/variable controls:
+
+- `COMVOLY_PUBLIC_API_URL=https://clever-miracle-v2-development.up.railway.app`
+- `COMVOLY_TELEGRAM_BOT_USER_ID=<official numeric bot ID>`
+- `COMVOLY_TELEGRAM_BOT_USERNAME=<official username without @>`
+- `COMVOLY_TELEGRAM_WEBHOOK_MASTER_KEY=<separate random value of at least 32 characters>`
+
+The BotFather token is intentionally not consumed by the web application yet. It will
+be needed only by the one-time webhook-registration operation, which must be added as a
+Railway secret and must never be stored in the database, frontend, repository or chat.
+Migration 3 is additive and applies automatically only where
+`COMVOLY_ENABLE_V2_SCHEMA=true`; production retains its existing schema gate.
+
 The Cloudflare production-dependency audit currently reports three high-severity
 advisories in transitive Next.js build packages (`postcss` and `sharp`) and no critical
 advisories. This deployment publishes static assets only, so those packages are not in

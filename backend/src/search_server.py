@@ -124,7 +124,7 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
         self.send_header("Access-Control-Allow-Credentials", "true")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Comvoly-Account-Id")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Comvoly-Account-Id, X-Telegram-Bot-Api-Secret-Token")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Cache-Control", "no-store")
         for name, value in (extra_headers or {}).items():
@@ -246,7 +246,8 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
     def v2_request(self, method: str, path: str, payload: dict[str, object]) -> None:
         from v2_http import V2HTTPAdapter
 
-        headers = {name: self.headers.get(name, "") for name in ("Authorization", "X-Comvoly-Account-Id")}
+        headers = {name: self.headers.get(name, "") for name in (
+            "Authorization", "X-Comvoly-Account-Id", "X-Telegram-Bot-Api-Secret-Token")}
         with connect_database(DATABASE_PATH) as database:
             status, response = V2HTTPAdapter(database).dispatch(method, path, payload, headers)
         self.send_json(HTTPStatus(status), response)

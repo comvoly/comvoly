@@ -160,7 +160,38 @@ ACCOUNT_EXPERIENCE = Migration(
     ),
 )
 
-MIGRATIONS = (V2_FOUNDATION, ACCOUNT_EXPERIENCE)
+TELEGRAM_LIVE_PILOT = Migration(
+    3,
+    "v2_telegram_live_pilot",
+    (
+        """CREATE TABLE IF NOT EXISTS telegram_connection_configs (
+            source_connection_id TEXT PRIMARY KEY REFERENCES source_connections(id),
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+            bot_user_id TEXT NOT NULL, bot_username TEXT NOT NULL,
+            expected_chat_id TEXT NOT NULL, webhook_secret_digest TEXT NOT NULL,
+            activation_state TEXT NOT NULL CHECK (activation_state IN
+                ('prepared','awaiting_bot','verifying','connected','degraded','revoked')),
+            membership_status TEXT NOT NULL DEFAULT 'unknown',
+            receives_messages INTEGER NOT NULL DEFAULT 0 CHECK (receives_messages IN (0,1)),
+            last_update_id BIGINT, last_received_at TEXT, verified_at TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            UNIQUE(workspace_id, expected_chat_id), UNIQUE(source_connection_id, workspace_id),
+            FOREIGN KEY(source_connection_id, workspace_id)
+                REFERENCES source_connections(id, workspace_id))""",
+        """CREATE TABLE IF NOT EXISTS telegram_webhook_events (
+            source_connection_id TEXT NOT NULL REFERENCES source_connections(id),
+            workspace_id TEXT NOT NULL REFERENCES workspaces(id), update_id BIGINT NOT NULL,
+            event_type TEXT NOT NULL, state TEXT NOT NULL CHECK (state IN
+                ('received','processed','ignored','failed')),
+            external_message_id TEXT, error_code TEXT, received_at TEXT NOT NULL,
+            processed_at TEXT, PRIMARY KEY(source_connection_id, update_id),
+            FOREIGN KEY(source_connection_id, workspace_id)
+                REFERENCES source_connections(id, workspace_id))""",
+        "CREATE INDEX IF NOT EXISTS telegram_events_workspace_time ON telegram_webhook_events(workspace_id, received_at)",
+    ),
+)
+
+MIGRATIONS = (V2_FOUNDATION, ACCOUNT_EXPERIENCE, TELEGRAM_LIVE_PILOT)
 
 
 def apply_migrations(connection: Any) -> None:

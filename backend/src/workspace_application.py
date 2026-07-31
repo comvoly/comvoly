@@ -10,7 +10,9 @@ from authorization import AccessDenied, Principal
 from database import query
 from invitations import InvitationService
 from telegram_export import normalise_messages, preview_export, checksum_item
+from telegram_live import TelegramLiveService
 from v2_store import ComvolyStore, new_id, utc_now
+from workspace_intelligence import WorkspaceIntelligence
 
 
 class ApplicationError(Exception):
@@ -21,9 +23,11 @@ class ApplicationError(Exception):
 
 
 class WorkspaceApplication:
-    def __init__(self, connection: Any):
+    def __init__(self, connection: Any, telegram_live: TelegramLiveService | None = None):
         self.store = ComvolyStore(connection)
         self.invitations = InvitationService(connection)
+        self.telegram_live = telegram_live
+        self.intelligence = WorkspaceIntelligence(connection)
 
     def session(self, principal: Principal) -> dict[str, Any]:
         workspaces = self.store.list_workspaces(principal)
@@ -206,6 +210,49 @@ class WorkspaceApplication:
                           "import_job", job_id, metadata={"stored": int(job["progress_current"])})
         return {"job_id": job_id, "state": "owner_review",
                 "progress_current": int(job["progress_current"]), "progress_total": job["progress_total"]}
+
+    def prepare_telegram_live(self, principal: Principal, workspace_id: str,
+                              payload: dict[str, Any]) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "manage_sources")
+        if self.telegram_live is None:
+            raise ApplicationError(503, "The official Comvoly Telegram bot has not been configured yet.")
+        return self.telegram_live.prepare(context, str(payload.get("source_id", "")),
+                                          str(payload.get("expected_chat_id", "")))
+
+    def telegram_live_status(self, principal: Principal, workspace_id: str,
+                             source_id: str) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "manage_sources")
+        if self.telegram_live is None:
+            return {"source_id": source_id, "state": "not_prepared", "configured": False}
+        return self.telegram_live.status(context, source_id)
+
+    def ask(self, principal: Principal, workspace_id: str,
+            payload: dict[str, Any]) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "use_intelligence")
+        question = str(payload.get("question", "")).strip()
+        if not question or len(question) > 1000:
+            raise ApplicationError(400, "Enter a question of up to 1,000 characters.")
+        result = self.intelligence.answer(context, question)
+        now = utc_now()
+        period_start = now[:7] + "-01"
+        self.store.connection.execute(query("""INSERT INTO usage_counters
+            (workspace_id, metric, period_start, quantity, estimated_cost_minor, updated_at)
+            VALUES (?, 'intelligence_questions', ?, 1, 0, ?)
+            ON CONFLICT(workspace_id, metric, period_start) DO UPDATE SET
+            quantity=usage_counters.quantity + 1, updated_at=excluded.updated_at"""),
+            (workspace_id, period_start, now))
+        self.store._audit(workspace_id, context.account_id, "intelligence.asked",
+                          "workspace", workspace_id,
+                          metadata={"evidence_count": result["evidence_count"], "mode": result["mode"]})
+        return result
+
+    def search(self, principal: Principal, workspace_id: str,
+               payload: dict[str, Any]) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "use_intelligence")
+        term = str(payload.get("query", "")).strip()
+        if not term or len(term) > 500:
+            raise ApplicationError(400, "Enter a search query of up to 500 characters.")
+        return {"query": term, "results": self.intelligence.retrieve(context, term, 30)}
 
     def _ensure_telegram_scope(self, workspace_id: str, source_id: str,
                                external_id: str) -> tuple[str, str]:

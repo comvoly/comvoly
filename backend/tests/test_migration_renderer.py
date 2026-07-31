@@ -19,7 +19,8 @@ class MigrationRendererTests(unittest.TestCase):
         self.assertIn("COMMIT;", sql)
         self.assertIn("v2_secure_multi_community_foundation", sql)
         self.assertIn("v2_account_workspace_experience", sql)
-        self.assertEqual(sql.count("ON CONFLICT (version) DO NOTHING"), 2)
+        self.assertIn("v2_telegram_live_pilot", sql)
+        self.assertEqual(sql.count("ON CONFLICT (version) DO NOTHING"), 3)
         self.assertNotIn("INSERT INTO accounts", sql)
         self.assertNotIn("INSERT INTO workspaces", sql)
 

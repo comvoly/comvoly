@@ -78,3 +78,7 @@ Desktop export as 3 messages, 2 participants, 1 media reference and 1 service ev
 imported all 3 messages; moved the job to `owner_review`; and left the source paused
 pending bot activation. The isolated v2 API and unchanged production API both returned
 healthy after deployment.
+
+The next live-ingestion slice is now implemented behind feature gates; see
+[Telegram live pilot milestone](TELEGRAM_LIVE_PILOT.md). External BotFather registration
+and real-group activation remain deliberately unperformed.

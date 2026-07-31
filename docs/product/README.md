@@ -29,6 +29,7 @@ For phone review, open the consolidated
 10. [Account and workspace milestone](ACCOUNT_WORKSPACE_MILESTONE.md)
 11. [Owner workspace and invited-member milestone](OWNER_MEMBER_MILESTONE.md)
 12. [Founder Telegram history milestone](TELEGRAM_MILESTONE.md)
+13. [Telegram live pilot milestone](TELEGRAM_LIVE_PILOT.md)
 
 ## Package status
 
@@ -37,7 +38,7 @@ For phone review, open the consolidated
 | Product positioning and scope | Proposed decision | Founder review |
 | Owner and member journeys | Implemented in isolated development | Founder acceptance testing |
 | Account/workspace model | Implemented | Production identity rollout decision |
-| Telegram ongoing connection | Guided boundary implemented | Bot registration and policy review |
+| Telegram ongoing connection | Secure webhook and onboarding implemented behind gates | BotFather registration and policy review |
 | Telegram history import | Implemented for JSON/text | Founder export and media acceptance |
 | Discord connector | Feasible and specified | Test server and privileged intents |
 | Skool connector | Conditional | Approved API/export access |

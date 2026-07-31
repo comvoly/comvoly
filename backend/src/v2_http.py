@@ -14,6 +14,7 @@ from identity_provider import (
     IdentityProvider,
     NeonJWTIdentityProvider,
 )
+from telegram_live import TelegramLiveError, TelegramLiveService
 from workspace_application import ApplicationError, WorkspaceApplication
 
 
@@ -47,7 +48,14 @@ class V2HTTPAdapter:
         allow_registration = os.getenv("COMVOLY_V2_SELF_REGISTRATION", "false").lower() == "true"
         self.account_resolver = account_resolver or DatabaseAccountResolver(
             connection, allow_registration=allow_registration)
-        self.application = WorkspaceApplication(connection)
+        self.telegram_live = TelegramLiveService(
+            connection,
+            os.getenv("COMVOLY_TELEGRAM_WEBHOOK_MASTER_KEY", ""),
+            os.getenv("COMVOLY_TELEGRAM_BOT_USER_ID", ""),
+            os.getenv("COMVOLY_TELEGRAM_BOT_USERNAME", ""),
+            os.getenv("COMVOLY_PUBLIC_API_URL", ""),
+        )
+        self.application = WorkspaceApplication(connection, self.telegram_live)
 
     def _principal(self, headers: Mapping[str, str]) -> Principal | None:
         if self.identity_provider is not None:
@@ -62,6 +70,13 @@ class V2HTTPAdapter:
                  headers: Mapping[str, str]) -> tuple[int, object]:
         if not v2_api_enabled():
             return 404, {"detail": "Not found."}
+        parts = [part for part in path.split("/") if part]
+        if method == "POST" and len(parts) == 4 and parts[:3] == ["v2", "telegram", "webhooks"]:
+            try:
+                return self.telegram_live.receive(
+                    parts[3], headers.get("X-Telegram-Bot-Api-Secret-Token", ""), payload)
+            except TelegramLiveError as error:
+                return error.status, {"detail": error.detail}
         try:
             principal = self._principal(headers)
         except AccountNotProvisioned as error:
@@ -69,7 +84,6 @@ class V2HTTPAdapter:
         if principal is None:
             return 401, {"detail": "A verified Comvoly account session is required."}
         try:
-            parts = [part for part in path.split("/") if part]
             if method == "GET" and parts == ["v2", "session"]:
                 return 200, self.application.session(principal)
             if method == "POST" and parts == ["v2", "workspaces"]:
@@ -96,6 +110,16 @@ class V2HTTPAdapter:
                     return 200, self.application.preview_telegram_export(principal, workspace_id, payload)
                 if method == "POST" and parts[3:] == ["telegram", "imports"]:
                     return 201, self.application.start_telegram_import(principal, workspace_id, payload)
+                if method == "POST" and parts[3:] == ["telegram", "live", "prepare"]:
+                    return 200, self.application.prepare_telegram_live(principal, workspace_id, payload)
+                if (method == "GET" and len(parts) == 7 and
+                        parts[3:6] == ["telegram", "live", "status"]):
+                    return 200, self.application.telegram_live_status(
+                        principal, workspace_id, parts[6])
+                if method == "POST" and parts[3:] == ["intelligence", "ask"]:
+                    return 200, self.application.ask(principal, workspace_id, payload)
+                if method == "POST" and parts[3:] == ["intelligence", "search"]:
+                    return 200, self.application.search(principal, workspace_id, payload)
                 if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
                         and parts[6] == "chunks"):
                     return 200, self.application.import_telegram_chunk(
@@ -106,6 +130,8 @@ class V2HTTPAdapter:
                         principal, workspace_id, parts[5])
             return 404, {"detail": "Not found."}
         except ApplicationError as error:
+            return error.status, {"detail": error.detail}
+        except TelegramLiveError as error:
             return error.status, {"detail": error.detail}
         except ValueError as error:
             return 400, {"detail": str(error)}
