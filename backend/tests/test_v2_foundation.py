@@ -450,16 +450,47 @@ class V2FoundationTests(unittest.TestCase):
                              (status, removed["state"], removed["knowledge_retained"]))
             source_state = self.database.execute(
                 "SELECT state FROM source_connections WHERE id=?", (source_id,)).fetchone()[0]
-            binding_state = self.database.execute(
-                "SELECT activation_state FROM telegram_connection_configs WHERE source_connection_id=?",
-                (source_id,)).fetchone()[0]
-            self.assertEqual(("revoked", "revoked"), (source_state, binding_state))
+            binding = self.database.execute(
+                """SELECT activation_state, expected_chat_id FROM telegram_connection_configs
+                    WHERE source_connection_id=?""", (source_id,)).fetchone()
+            self.assertEqual(("revoked", "revoked", f"revoked:{source_id}"),
+                             (source_state, binding[0], binding[1]))
             self.assertEqual(404, adapter.dispatch("POST", disconnect, {}, owner_headers)[0])
             self.assertEqual(404, adapter.dispatch("POST", disconnect, {}, member_headers)[0])
             status, replacement = adapter.dispatch("POST", path,
                 {"display_name": "Fresh Group"}, owner_headers)
             self.assertEqual(200, status)
             self.assertNotEqual(source_id, replacement["source_id"])
+
+    def test_revoked_telegram_binding_does_not_block_group_reconnection(self) -> None:
+        self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")
+        master = "telegram-test-master-key-longer-than-thirty-two-characters"
+        with patch.dict("os.environ", {"COMVOLY_TELEGRAM_WEBHOOK_MASTER_KEY": master,
+            "COMVOLY_TELEGRAM_BOT_USER_ID": "9001", "COMVOLY_TELEGRAM_BOT_USERNAME": "ComvolyTestBot",
+            "COMVOLY_PUBLIC_API_URL": "https://api.dev.example.test"}):
+            adapter = V2HTTPAdapter(self.database)
+            owner_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                             "X-Comvoly-Account-Id": "acct_a"}
+            original = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/live/prepare",
+                {"source_id": "src_a"}, owner_headers)[1]
+            original_code = parse_qs(urlparse(original["install_url"]).query)["startgroup"][0]
+            secret = derive_webhook_secret(master)
+            activation = {"update_id": 40, "message": {"message_id": 1, "date": 1785484700,
+                "chat": {"id": -10042, "type": "supergroup"}, "text": f"/start {original_code}"}}
+            self.assertEqual(200, adapter.dispatch("POST", "/v2/telegram/webhooks", activation,
+                {"X-Telegram-Bot-Api-Secret-Token": secret})[0])
+            self.assertEqual(200, adapter.dispatch("POST",
+                "/v2/workspaces/ws_a/telegram/disconnect/src_a", {}, owner_headers)[0])
+
+            replacement = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/connect",
+                {"display_name": "Reconnected Group"}, owner_headers)[1]
+            replacement_code = parse_qs(urlparse(replacement["install_url"]).query)["startgroup"][0]
+            retry = {"update_id": 41, "message": {"message_id": 2, "date": 1785484800,
+                "chat": {"id": -10042, "type": "supergroup"},
+                "text": f"/start {replacement_code}"}}
+            result = adapter.dispatch("POST", "/v2/telegram/webhooks", retry,
+                {"X-Telegram-Bot-Api-Secret-Token": secret})
+            self.assertEqual((200, "verifying"), (result[0], result[1]["state"]))
 
     def test_telegram_live_ignores_wrong_chat_without_cross_workspace_content(self) -> None:
         self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")

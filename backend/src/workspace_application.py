@@ -254,9 +254,10 @@ class WorkspaceApplication:
             raise ApplicationError(404, "Telegram connection not found.")
         now = utc_now()
         self.store.connection.execute(query("""UPDATE telegram_connection_configs
-            SET activation_state='revoked', receives_messages=0, updated_at=?
+            SET activation_state='revoked', receives_messages=0,
+                expected_chat_id=?, updated_at=?
             WHERE source_connection_id=? AND workspace_id=?"""),
-            (now, source_id, workspace_id))
+            (f"revoked:{source_id}", now, source_id, workspace_id))
         self.store.connection.execute(query("""UPDATE source_connections
             SET state='revoked', health='unknown', updated_at=?
             WHERE id=? AND workspace_id=?"""), (now, source_id, workspace_id))

@@ -208,8 +208,12 @@ class TelegramLiveService:
             self._finish(source_id, update_id, "ignored", "not_a_group")
             return 200, {"ok": True, "state": "ignored"}
         chat_id = str(chat.get("id", ""))
-        occupied = self.connection.execute(query("""SELECT source_connection_id
-            FROM telegram_connection_configs WHERE expected_chat_id=? AND source_connection_id<>?"""),
+        occupied = self.connection.execute(query("""SELECT c.source_connection_id
+            FROM telegram_connection_configs c
+            JOIN source_connections s
+              ON s.id=c.source_connection_id AND s.workspace_id=c.workspace_id
+            WHERE c.expected_chat_id=? AND c.source_connection_id<>?
+              AND c.activation_state<>'revoked' AND s.state<>'revoked'"""),
             (chat_id, source_id)).fetchone()
         if occupied is not None:
             self._finish(source_id, update_id, "failed", "chat_already_bound")
