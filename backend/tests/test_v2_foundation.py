@@ -481,6 +481,10 @@ class V2FoundationTests(unittest.TestCase):
                 {"X-Telegram-Bot-Api-Secret-Token": secret})[0])
             self.assertEqual(200, adapter.dispatch("POST",
                 "/v2/workspaces/ws_a/telegram/disconnect/src_a", {}, owner_headers)[0])
+            # Existing deployments revoked connections without releasing the
+            # group identifier. Reproduce that legacy row during reconnection.
+            self.database.execute("""UPDATE telegram_connection_configs
+                SET expected_chat_id='-10042' WHERE source_connection_id='src_a'""")
 
             replacement = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/connect",
                 {"display_name": "Reconnected Group"}, owner_headers)[1]
@@ -491,6 +495,9 @@ class V2FoundationTests(unittest.TestCase):
             result = adapter.dispatch("POST", "/v2/telegram/webhooks", retry,
                 {"X-Telegram-Bot-Api-Secret-Token": secret})
             self.assertEqual((200, "verifying"), (result[0], result[1]["state"]))
+            released = self.database.execute("""SELECT expected_chat_id
+                FROM telegram_connection_configs WHERE source_connection_id='src_a'""").fetchone()[0]
+            self.assertEqual("revoked:src_a", released)
 
     def test_telegram_live_ignores_wrong_chat_without_cross_workspace_content(self) -> None:
         self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")

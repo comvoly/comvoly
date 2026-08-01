@@ -208,6 +208,18 @@ class TelegramLiveService:
             self._finish(source_id, update_id, "ignored", "not_a_group")
             return 200, {"ok": True, "state": "ignored"}
         chat_id = str(chat.get("id", ""))
+        stale = self.connection.execute(query("""SELECT c.source_connection_id
+            FROM telegram_connection_configs c
+            JOIN source_connections s
+              ON s.id=c.source_connection_id AND s.workspace_id=c.workspace_id
+            WHERE c.expected_chat_id=? AND c.source_connection_id<>?
+              AND (c.activation_state='revoked' OR s.state='revoked')"""),
+            (chat_id, source_id)).fetchall()
+        for released in stale:
+            released_id = str(released["source_connection_id"])
+            self.connection.execute(query("""UPDATE telegram_connection_configs
+                SET expected_chat_id=?, updated_at=? WHERE source_connection_id=?"""),
+                (f"revoked:{released_id}", utc_now(), released_id))
         occupied = self.connection.execute(query("""SELECT c.source_connection_id
             FROM telegram_connection_configs c
             JOIN source_connections s
