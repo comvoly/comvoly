@@ -31,7 +31,10 @@ type IntelligenceAnswer = {
 
 type ImportReview = TelegramImportStatus & {
   summary: Partial<TelegramStreamSummary> & { warnings?: string[] };
-  inventory: { message_count: number; participant_count: number; overlap_count: number; history_start: string | null; history_end: string | null };
+  inventory: { message_count: number; total_count: number; excluded_count: number; participant_count: number;
+    overlap_count: number; history_start: string | null; history_end: string | null };
+  diagnostics: { new: number; unchanged: number; changed: number; skipped: number };
+  policy: { date_from: string | null; date_to: string | null; excluded_author_ids: string[] };
   samples: Array<{ id: string; external_item_id: string; author_external_id: string | null;
     author_display_name: string | null; body_text: string | null; source_created_at: string; review_state: string }>;
   can_accept: boolean; can_cancel: boolean; can_restart: boolean;
@@ -235,11 +238,18 @@ function ImportReviewList({ detail, token, refresh }: { detail: WorkspaceDetail;
   const [busyAction, setBusyAction] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const [excludedSenders, setExcludedSenders] = useState("");
 
   async function load(jobId: string) {
     if (openId === jobId) { setOpenId(""); setReview(null); return; }
     setOpenId(jobId); setReview(null); setError(""); setMessage("");
-    try { setReview(await api<ImportReview>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/imports/${jobId}/review`)); }
+    try {
+      const next = await api<ImportReview>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/imports/${jobId}/review`);
+      setReview(next); setDateFrom(next.policy.date_from || ""); setDateTo(next.policy.date_to || "");
+      setExcludedSenders(next.policy.excluded_author_ids.join(", "));
+    }
     catch (e) { setError(e instanceof Error ? e.message : "Could not load this import review."); }
   }
   async function action(name: "accept" | "cancel" | "restart") {
@@ -256,13 +266,49 @@ function ImportReviewList({ detail, token, refresh }: { detail: WorkspaceDetail;
     } catch (e) { setError(e instanceof Error ? e.message : `Could not ${name} this import.`); }
     finally { setBusyAction(""); }
   }
+  async function applyPolicy() {
+    if (!review) return;
+    setBusyAction("policy"); setError(""); setMessage("");
+    try {
+      const next = await api<ImportReview>(API_URL, token,
+        `/v2/workspaces/${detail.workspace.id}/telegram/imports/${review.job_id}/policy`, {
+          method: "POST", body: JSON.stringify({ date_from: dateFrom || null, date_to: dateTo || null,
+            excluded_author_ids: excludedSenders.split(",").map((value) => value.trim()).filter(Boolean) }),
+        });
+      setReview(next); setMessage(`${next.inventory.message_count.toLocaleString()} messages included; ${next.inventory.excluded_count.toLocaleString()} excluded.`);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not apply the review policy."); }
+    finally { setBusyAction(""); }
+  }
+  function downloadDiagnostics() {
+    if (!review) return;
+    const report = { generated_at: new Date().toISOString(), workspace: detail.workspace.name,
+      import_job_id: review.job_id, state: review.state, inventory: review.inventory,
+      diagnostics: review.diagnostics, policy: review.policy, warnings: review.summary.warnings || [] };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }));
+    const link = document.createElement("a"); link.href = url; link.download = `comvoly-import-${review.job_id}-diagnostics.json`;
+    link.click(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
   return <div className="mt-6 border-t border-white/10 pt-5"><div className="flex flex-wrap items-end justify-between gap-3"><div><h4 className="font-medium">Historical import review</h4><p className="mt-1 text-xs text-slate-500">Imported knowledge is not used in answers until you accept it.</p></div></div>
     {message && <p className="mt-3 rounded-xl bg-emerald-300/10 p-3 text-sm text-emerald-100">{message}</p>}
     {detail.imports.length ? detail.imports.map((job) => <div key={job.id} className="mt-3 rounded-xl border border-white/10 bg-[#061124] p-4 text-sm text-slate-300"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium capitalize">{job.stage.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-slate-500">{job.progress_current.toLocaleString()}/{job.progress_total?.toLocaleString() ?? "?"} messages · updated {formatDateTime(job.updated_at)}</p></div><button onClick={() => void load(job.id)} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold">{openId === job.id ? "Close" : job.state === "owner_review" ? "Review and accept" : "View details"}</button></div>{job.warning_count + job.failure_count > 0 && <p className="mt-2 text-xs text-amber-200">{job.warning_count} warnings · {job.failure_count} failures</p>}
       {openId === job.id && !review && !error && <p className="mt-4 text-xs text-slate-400">Loading review…</p>}
       {openId === job.id && error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
       {openId === job.id && review && <div className="mt-4 border-t border-white/10 pt-4"><div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><Metric label="Messages staged" value={review.inventory.message_count} /><Metric label="Already stored" value={review.inventory.overlap_count} /><Metric label="Participants" value={review.inventory.participant_count} /><Metric label="Warnings" value={review.warning_count} /><Metric label="Failed items" value={review.failure_count} /></div><p className="mt-3 text-xs text-slate-500">Coverage: {formatDate(review.inventory.history_start)} – {formatDate(review.inventory.history_end)}</p>{(review.summary.warnings || []).map((warning) => <p key={warning} className="mt-2 rounded-lg bg-amber-300/10 p-2 text-xs text-amber-100">{warning}</p>)}{review.samples.length > 0 && <div className="mt-4"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Recent sample</p><div className="mt-2 space-y-2">{review.samples.map((sample) => <div key={sample.id} className="rounded-lg bg-white/[.04] p-3"><div className="flex justify-between gap-3 text-xs text-slate-500"><span>{sample.author_display_name || sample.author_external_id || "Community member"}</span><span>{formatDate(sample.source_created_at)}</span></div><p className="mt-1 line-clamp-3 text-sm text-slate-300">{sample.body_text || "Message without text"}</p></div>)}</div></div>}<div className="mt-5 flex flex-wrap gap-3">{review.can_accept && <button disabled={Boolean(busyAction)} onClick={() => void action("accept")} className="rounded-xl bg-[#ffcf4a] px-4 py-2.5 font-bold text-[#07152b]">{busyAction === "accept" ? "Accepting…" : "Accept knowledge"}</button>}{review.can_cancel && <button disabled={Boolean(busyAction)} onClick={() => void action("cancel")} className="rounded-xl border border-rose-300/30 px-4 py-2.5 font-semibold text-rose-200">{busyAction === "cancel" ? "Cancelling…" : "Cancel import"}</button>}{review.can_restart && <button disabled={Boolean(busyAction)} onClick={() => void action("restart")} className="rounded-xl border border-[#ffcf4a]/40 px-4 py-2.5 font-semibold text-[#ffcf4a]">{busyAction === "restart" ? "Preparing…" : "Restart import"}</button>}{review.state === "active" && <span className="rounded-full bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-200">Accepted · available to Comvoly</span>}{review.state === "cancelled" && <span className="rounded-full bg-slate-700 px-3 py-2 text-xs">Cancelled · staged messages removed</span>}</div></div>}
+      {openId === job.id && review && <ReviewCurationPanel review={review} busy={Boolean(busyAction)}
+        dateFrom={dateFrom} dateTo={dateTo} excludedSenders={excludedSenders}
+        setDateFrom={setDateFrom} setDateTo={setDateTo} setExcludedSenders={setExcludedSenders}
+        applyPolicy={applyPolicy} downloadDiagnostics={downloadDiagnostics} />}
     </div>) : <p className="mt-2 text-sm text-slate-500">No historical imports yet.</p>}
+  </div>;
+}
+
+function ReviewCurationPanel({ review, busy, dateFrom, dateTo, excludedSenders, setDateFrom, setDateTo,
+  setExcludedSenders, applyPolicy, downloadDiagnostics }: { review: ImportReview; busy: boolean;
+  dateFrom: string; dateTo: string; excludedSenders: string; setDateFrom: (value: string) => void;
+  setDateTo: (value: string) => void; setExcludedSenders: (value: string) => void;
+  applyPolicy: () => Promise<void>; downloadDiagnostics: () => void }) {
+  return <div className="mt-4 rounded-xl border border-white/10 bg-white/[.025] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">Import diagnostics</p><p className="mt-1 text-xs text-slate-500">What this export would add or change.</p></div><button onClick={downloadDiagnostics} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold">Download report</button></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="New" value={review.diagnostics.new} /><Metric label="Already identical" value={review.diagnostics.unchanged} /><Metric label="Changed versions" value={review.diagnostics.changed} /><Metric label="Skipped events" value={review.diagnostics.skipped} /></div>
+    {review.can_accept && <div className="mt-5 border-t border-white/10 pt-4"><p className="font-semibold">Choose included knowledge</p><p className="mt-1 text-xs leading-5 text-slate-500">Filters are reversible until acceptance. Excluded messages remain unavailable to Comvoly.</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-xs text-slate-400">From date<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-[#091a36] px-3 py-2 text-sm text-white" /></label><label className="text-xs text-slate-400">To date<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} className="mt-1 w-full rounded-lg border border-white/15 bg-[#091a36] px-3 py-2 text-sm text-white" /></label></div><label className="mt-3 block text-xs text-slate-400">Exclude sender IDs <span className="text-slate-600">(comma-separated)</span><input value={excludedSenders} onChange={(event) => setExcludedSenders(event.target.value)} placeholder="user123, user456" className="mt-1 w-full rounded-lg border border-white/15 bg-[#091a36] px-3 py-2 text-sm text-white" /></label><div className="mt-4 flex flex-wrap items-center gap-3"><button disabled={busy} onClick={() => void applyPolicy()} className="rounded-xl border border-[#ffcf4a]/40 px-4 py-2.5 font-semibold text-[#ffcf4a]">{busy ? "Applying…" : "Apply filters"}</button><span className="text-xs text-slate-500">{review.inventory.message_count.toLocaleString()} included · {review.inventory.excluded_count.toLocaleString()} excluded</span></div></div>}
   </div>;
 }
 

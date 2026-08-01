@@ -465,6 +465,8 @@ class V2FoundationTests(unittest.TestCase):
         self.assertEqual((200, True, 3, 3), (status, review["can_accept"],
                          review["inventory"]["message_count"], len(review["samples"])))
         self.assertEqual(3, review["summary"]["message_count"])
+        self.assertEqual({"new": 3, "unchanged": 0, "changed": 0, "skipped": 1},
+                         review["diagnostics"])
         evidence_context = self.store.context(self.owner_a, self.workspace_a, "view_evidence")
         retrieval_context = self.store.context(self.owner_a, self.workspace_a, "use_intelligence")
         staged_id = review["samples"][0]["id"]
@@ -476,6 +478,21 @@ class V2FoundationTests(unittest.TestCase):
         member_headers = {"Authorization": "Bearer a-long-local-development-secret",
                           "X-Comvoly-Account-Id": "acct_member"}
         self.assertEqual(404, adapter.dispatch("GET", f"{base}/review", {}, member_headers)[0])
+        self.assertEqual(404, adapter.dispatch("POST", f"{base}/policy",
+            {"date_from": "2026-01-02"}, member_headers)[0])
+
+        date_filtered = adapter.dispatch("POST", f"{base}/policy",
+            {"date_from": "2026-01-02", "date_to": None, "excluded_author_ids": []}, owner_headers)[1]
+        self.assertEqual((2, 1), (date_filtered["inventory"]["message_count"],
+                                 date_filtered["inventory"]["excluded_count"]))
+        sender_filtered = adapter.dispatch("POST", f"{base}/policy",
+            {"date_from": None, "date_to": None, "excluded_author_ids": ["user1"]}, owner_headers)[1]
+        self.assertEqual((1, 2), (sender_filtered["inventory"]["message_count"],
+                                 sender_filtered["inventory"]["excluded_count"]))
+        restored = adapter.dispatch("POST", f"{base}/policy",
+            {"date_from": None, "date_to": None, "excluded_author_ids": []}, owner_headers)[1]
+        self.assertEqual((3, 0), (restored["inventory"]["message_count"],
+                                 restored["inventory"]["excluded_count"]))
 
         accepted = adapter.dispatch("POST", f"{base}/accept", {}, owner_headers)[1]
         self.assertEqual(("active", False), (accepted["state"], accepted["can_accept"]))
@@ -486,14 +503,18 @@ class V2FoundationTests(unittest.TestCase):
                          {item["ingestion_method"] for item in after["citations"]})
         self.assertEqual(409, adapter.dispatch("POST", f"{base}/cancel", {}, owner_headers)[0])
 
+        repeated_document = json.loads(json.dumps(document))
+        repeated_document["messages"][-1]["text"] = "A revised later decision"
         repeated = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/imports",
             {"summary": summary, "source_id": "src_a", "idempotency_key": "review-a-changed-file"}, owner_headers)[1]
         repeated_base = f"/v2/workspaces/ws_a/telegram/imports/{repeated['job_id']}"
         adapter.dispatch("POST", f"{repeated_base}/chunks",
-                         {"chunk_index": 0, "messages": document["messages"]}, owner_headers)
+                         {"chunk_index": 0, "messages": repeated_document["messages"]}, owner_headers)
         repeated_review = adapter.dispatch("GET", f"{repeated_base}/review", {}, owner_headers)[1]
         self.assertEqual((0, 3), (repeated_review["inventory"]["message_count"],
                                  repeated_review["inventory"]["overlap_count"]))
+        self.assertEqual((2, 1), (repeated_review["diagnostics"]["unchanged"],
+                                  repeated_review["diagnostics"]["changed"]))
         adapter.dispatch("POST", f"{repeated_base}/cancel", {}, owner_headers)
         still_available = adapter.dispatch("POST", "/v2/workspaces/ws_a/intelligence/ask",
                                            {"question": "What decision was made?"}, owner_headers)[1]

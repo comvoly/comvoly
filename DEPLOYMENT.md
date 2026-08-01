@@ -130,6 +130,11 @@ Cancellation removes only staged records linked to that import job and preserves
 and previously accepted knowledge. The account UI exposes these actions under
 **Historical import review** and labels answer citations as live or historical.
 
+The review also aggregates per-chunk new/identical/changed/skipped diagnostics. Owners
+can download an aggregate JSON report and apply reversible inclusive date or exact
+sender-ID exclusions before acceptance. The review policy is stored as an import
+checkpoint; it does not add an external processor, object store or deployment secret.
+
 This import currently stores message text and metadata plus a media-path inventory; it
 does not upload the media directory. Do not configure a bot token in this environment
 until the bot registration, webhook secret, least-privilege permissions, community

@@ -147,6 +147,10 @@ class V2HTTPAdapter:
                     return 200, self.application.accept_telegram_import(
                         principal, workspace_id, parts[5])
                 if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
+                        and parts[6] == "policy"):
+                    return 200, self.application.update_telegram_import_policy(
+                        principal, workspace_id, parts[5], payload)
+                if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
                         and parts[6] == "cancel"):
                     return 200, self.application.cancel_telegram_import(
                         principal, workspace_id, parts[5])

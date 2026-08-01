@@ -68,7 +68,8 @@ activate a paid interpretation model.
 
 Founder acceptance should import a small real export, inspect the sample and coverage,
 accept it, and ask a question whose evidence exists in both old and newly posted
-messages. The next engineering milestone should add import diagnostics and curation:
-downloadable warning details, date/source exclusions, edited-message dry runs, and
-owner remediation for partial imports. Full media binaries remain separately gated by
-the storage, scanning, retention and cost decision.
+messages. Import diagnostics, downloadable review details, date/sender exclusions and
+edited-message dry-run classification are now implemented in the
+[import diagnostics and curation milestone](IMPORT_CURATION_MILESTONE.md). Applying an
+edited version remains gated on an explicit comparison/retention design. Full media
+binaries remain separately gated by the storage, scanning, retention and cost decision.

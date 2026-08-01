@@ -32,6 +32,7 @@ For phone review, open the consolidated
 13. [Telegram live pilot milestone](TELEGRAM_LIVE_PILOT.md)
 14. [Ingestion visibility and streaming import](INGESTION_VISIBILITY_AND_STREAMING_IMPORT.md)
 15. [Imported-knowledge review milestone](IMPORT_REVIEW_MILESTONE.md)
+16. [Import diagnostics and curation milestone](IMPORT_CURATION_MILESTONE.md)
 
 ## Package status
 
@@ -43,6 +44,7 @@ For phone review, open the consolidated
 | Telegram ongoing connection | Secure webhook and onboarding implemented behind gates | BotFather registration and policy review |
 | Telegram history import | Streaming, resumable JSON/text import implemented | Founder large-export acceptance; media remains separate |
 | Imported-knowledge review | Staging, review, accept, cancel and restart implemented | Founder mixed live/history acceptance |
+| Import diagnostics and curation | Change report, download and reversible date/sender filters implemented | Founder real-export usability test |
 | Discord connector | Feasible and specified | Test server and privileged intents |
 | Skool connector | Conditional | Approved API/export access |
 | Media pipeline | Specified in stages | Storage/provider selection |
