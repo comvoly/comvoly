@@ -34,6 +34,10 @@ and its global webhook is healthy; production remains unchanged.
   revokes its Telegram binding immediately and hides it from active setup while
   retaining previously stored knowledge; destructive knowledge deletion remains a
   separate future workflow requiring explicit confirmation.
+- Attempts that receive no Telegram binding event within ten minutes are presented as
+  expired and stop polling. The retry journey explicitly distinguishes opening the
+  Telegram launch page, selecting the group and waiting for bot confirmation before a
+  normal-message delivery test.
 
 ## Cited intelligence pilot
 

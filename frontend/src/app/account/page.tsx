@@ -17,7 +17,8 @@ type TelegramPreview = {
 type TelegramLiveStatus = {
   source_id: string; state: string; configured: boolean; bot_username?: string;
   membership_status?: string; receives_messages?: boolean; last_received_at?: string | null;
-  install_url?: string; webhook_url?: string;
+  install_url?: string; webhook_url?: string; connection_prepared_at?: string;
+  connection_expired?: boolean;
 };
 
 type IntelligenceAnswer = {
@@ -179,17 +180,18 @@ function TelegramConnectWizard({ detail, token, refresh }: { detail: WorkspaceDe
   const [name, setName] = useState(source?.display_name || "");
   const [status, setStatus] = useState<TelegramLiveStatus | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  const expired = Boolean(status?.connection_expired);
   const load = useCallback(async () => {
     if (!source?.id) return;
     const next = await api<TelegramLiveStatus>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/live/status/${source.id}`);
     setStatus(next); if (next.state === "connected" && source.state !== "connected") await refresh();
   }, [detail.workspace.id, refresh, source, token]);
   useEffect(() => {
-    if (!source?.id || status?.state === "connected") return;
+    if (!source?.id || status?.state === "connected" || expired) return;
     const initial = window.setTimeout(() => void load().catch((e: Error) => setError(e.message)), 0);
     const timer = window.setInterval(() => void load().catch(() => undefined), 4000);
     return () => { window.clearTimeout(initial); window.clearInterval(timer); };
-  }, [load, source?.id, status?.state]);
+  }, [expired, load, source?.id, status?.state]);
   async function connect() {
     setBusy(true); setError("");
     try {
@@ -201,10 +203,11 @@ function TelegramConnectWizard({ detail, token, refresh }: { detail: WorkspaceDe
   const connected = source?.state === "connected" || status?.state === "connected";
   return <div className="mt-6 rounded-2xl border border-[#ffcf4a]/25 bg-[#061124] p-5">
     {connected ? <div className="flex items-start gap-3"><span className="mt-1 h-3 w-3 rounded-full bg-emerald-400" /><div><p className="font-semibold text-emerald-200">Telegram connected</p><p className="mt-1 text-sm text-slate-400">New messages are arriving automatically.</p></div></div> : <>
-      <p className="font-semibold">Connect Telegram</p><p className="mt-1 text-sm text-slate-400">Name the group, then choose it in Telegram. Comvoly handles the rest.</p>
-      {!status?.install_url && <div className="mt-4 flex flex-col gap-3 sm:flex-row"><input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="Telegram group name" className="flex-1 rounded-xl border border-white/15 bg-[#091a36] px-4 py-3 text-sm" /><button disabled={busy || !name.trim()} onClick={connect} className="rounded-xl bg-[#ffcf4a] px-5 py-3 font-bold text-[#07152b] disabled:opacity-50">{busy ? "Getting ready…" : source ? "Create a new connection" : "Connect Telegram"}</button></div>}
-      {status?.install_url && <div className="mt-4"><a href={status.install_url} target="_blank" rel="noreferrer" className="inline-flex rounded-xl bg-[#ffcf4a] px-5 py-3 font-bold text-[#07152b]">Choose your Telegram group</a><p className="mt-3 text-sm leading-6 text-slate-400">After Telegram adds ComvolyBot, send any normal message in the group. This page will confirm the connection automatically.</p></div>}
-      {source && status && !status.install_url && !connected && <p className="mt-3 text-xs text-slate-500">The previous private link is no longer shown. Create a new connection to continue.</p>}
+      <p className="font-semibold">Connect Telegram</p><p className="mt-1 text-sm text-slate-400">Comvoly will wait for Telegram to confirm that the bot was added to your group.</p>
+      {expired && <p className="mt-4 rounded-xl bg-amber-300/10 p-3 text-sm text-amber-100">Telegram did not confirm the previous attempt within 10 minutes. It is safe to create a fresh connection.</p>}
+      {(!status?.install_url || expired) && <div className="mt-4 flex flex-col gap-3 sm:flex-row"><input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="Telegram group name" className="flex-1 rounded-xl border border-white/15 bg-[#091a36] px-4 py-3 text-sm" /><button disabled={busy || !name.trim()} onClick={connect} className="rounded-xl bg-[#ffcf4a] px-5 py-3 font-bold text-[#07152b] disabled:opacity-50">{busy ? "Getting ready…" : source ? "Try a new connection" : "Connect Telegram"}</button></div>}
+      {status?.install_url && !expired && <div className="mt-4"><a href={status.install_url} target="_blank" rel="noreferrer" className="inline-flex rounded-xl bg-[#ffcf4a] px-5 py-3 font-bold text-[#07152b]">Open Telegram and choose the group</a><ol className="mt-4 list-decimal space-y-2 pl-5 text-sm leading-6 text-slate-400"><li>On Telegram&apos;s launch page, press <strong className="text-slate-200">Open Telegram</strong>.</li><li>Select the intended group and confirm adding ComvolyBot.</li><li>Return here. Comvoly will first confirm the bot, then ask for a test message.</li></ol></div>}
+      {source && status && !status.install_url && !connected && !expired && <p className="mt-3 text-xs text-slate-500">Telegram has not confirmed this connection yet. If you closed its launch page, create a fresh connection.</p>}
     </>}{error && <p className="mt-3 text-sm text-rose-200">{error}</p>}
   </div>;
 }

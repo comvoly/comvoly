@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 import hashlib
 import hmac
 import json
@@ -127,6 +127,13 @@ class TelegramLiveService:
         result = dict(row)
         result.update(source_id=source_id, configured=self.configured,
                       receives_messages=bool(result["receives_messages"]))
+        result["connection_prepared_at"] = result.get("updated_at")
+        try:
+            result["connection_expired"] = (
+                result.get("activation_state") == "awaiting_bot" and
+                datetime.now(UTC) - datetime.fromisoformat(str(result["updated_at"])) > timedelta(minutes=10))
+        except (KeyError, TypeError, ValueError):
+            result["connection_expired"] = False
         if str(result["expected_chat_id"]).startswith("pending:"):
             result["expected_chat_id"] = None
         return result
