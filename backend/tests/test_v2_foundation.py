@@ -326,6 +326,37 @@ class V2FoundationTests(unittest.TestCase):
             self.assertEqual(201, status)
             self.assertTrue(created["workspace_id"].startswith("ws_"))
 
+    def test_owner_can_safely_delete_workspace_but_members_and_other_tenants_cannot(self) -> None:
+        self._add_content()
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        adapter = V2HTTPAdapter(self.database)
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_a"}
+        member_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                          "X-Comvoly-Account-Id": "acct_member"}
+        other_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_b"}
+        path = "/v2/workspaces/ws_a"
+        self.assertEqual(404, adapter.dispatch("DELETE", path,
+            {"confirm_name": "Alpha"}, member_headers)[0])
+        self.assertEqual(404, adapter.dispatch("DELETE", path,
+            {"confirm_name": "Alpha"}, other_headers)[0])
+        self.assertEqual(400, adapter.dispatch("DELETE", path,
+            {"confirm_name": "wrong"}, owner_headers)[0])
+
+        status, result = adapter.dispatch("DELETE", path,
+            {"confirm_name": "Alpha"}, owner_headers)
+        self.assertEqual((200, "deleted", True),
+                         (status, result["state"], result["recoverable"]))
+        self.assertEqual([], adapter.dispatch("GET", "/v2/session", {}, owner_headers)[1]["workspaces"])
+        self.assertEqual(404, adapter.dispatch("GET", path, {}, owner_headers)[0])
+        self.assertEqual("revoked", self.database.execute(
+            "SELECT state FROM source_connections WHERE id='src_a'").fetchone()[0])
+        self.assertEqual(0, self.database.execute(
+            "SELECT COUNT(*) FROM memberships WHERE workspace_id='ws_a' AND state='active'").fetchone()[0])
+        self.assertEqual(1, self.database.execute(
+            "SELECT COUNT(*) FROM content_items WHERE workspace_id='ws_a'").fetchone()[0])
+
     def test_telegram_export_import_is_resumable_idempotent_and_workspace_scoped(self) -> None:
         adapter = V2HTTPAdapter(self.database)
         owner_headers = {"Authorization": "Bearer a-long-local-development-secret", "X-Comvoly-Account-Id": "acct_a"}

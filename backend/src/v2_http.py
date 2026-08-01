@@ -97,6 +97,8 @@ class V2HTTPAdapter:
                 workspace_id = parts[2]
                 if method == "GET" and len(parts) == 3:
                     return 200, self.application.overview(principal, workspace_id)
+                if method == "DELETE" and len(parts) == 3:
+                    return 200, self.application.delete_workspace(principal, workspace_id, payload)
                 if method == "GET" and parts[3:] == ["members"]:
                     return 200, {"members": self.application.members(principal, workspace_id)}
                 if method == "POST" and parts[3:] == ["invitations"]:

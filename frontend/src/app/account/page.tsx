@@ -50,7 +50,9 @@ function ConfiguredAccount({ authUrl }: { authUrl: string }) {
     const body = await api<ComvolySession>(API_URL, identityToken, "/v2/session");
     setToken(identityToken);
     setSession(body);
-    setSelectedId((current) => current || body.workspaces[0]?.id || "");
+    setSelectedId((current) => body.workspaces.some((item) => item.id === current)
+      ? current : body.workspaces[0]?.id || "");
+    return body;
   }, [authUrl]);
 
   useEffect(() => {
@@ -117,13 +119,14 @@ function ConfiguredAccount({ authUrl }: { authUrl: string }) {
     {message && <Notice>{message}</Notice>}
     {!session && !message && <p className="mt-8 text-slate-300">Loading your communities…</p>}
     {session && <AccountHome session={session} selectedId={selectedId} select={setSelectedId} detail={detail} token={token}
-      refresh={async () => { await refreshSession(); if (selectedId) setDetail(await api<WorkspaceDetail>(API_URL, token, `/v2/workspaces/${selectedId}`)); }} setMessage={setMessage} />}
+      refresh={async () => { const next = await refreshSession(); const target = next.workspaces.some((item) => item.id === selectedId) ? selectedId : next.workspaces[0]?.id || ""; if (target) setDetail(await api<WorkspaceDetail>(API_URL, token, `/v2/workspaces/${target}`)); else setDetail(null); }}
+      onDeleted={async () => { setDetail(null); setSelectedId(""); await refreshSession(); }} setMessage={setMessage} />}
   </Shell>;
 }
 
-function AccountHome({ session, selectedId, select, detail, token, refresh, setMessage }: {
+function AccountHome({ session, selectedId, select, detail, token, refresh, onDeleted, setMessage }: {
   session: ComvolySession; selectedId: string; select: (id: string) => void; detail: WorkspaceDetail | null;
-  token: string; refresh: () => Promise<void>; setMessage: (value: string) => void;
+  token: string; refresh: () => Promise<void>; onDeleted: () => Promise<void>; setMessage: (value: string) => void;
 }) {
   const [showCreate, setShowCreate] = useState(false);
   return <div className="mt-9 grid gap-6 lg:grid-cols-[17rem_1fr]">
@@ -133,7 +136,7 @@ function AccountHome({ session, selectedId, select, detail, token, refresh, setM
       <div className="mt-4 space-y-2">{session.workspaces.map((workspace) => <WorkspaceButton key={workspace.id} workspace={workspace} selected={selectedId === workspace.id} onClick={() => select(workspace.id)} />)}</div>
       {!session.workspaces.length && <p className="mt-5 px-2 text-sm leading-6 text-slate-400">No communities yet. Create one as an owner or follow an invitation from another owner.</p>}
     </aside>
-    <section>{selectedId ? (detail ? <WorkspacePanel detail={detail} token={token} refresh={refresh} setMessage={setMessage} /> : <p className="text-slate-300">Opening community…</p>) : <EmptyState />}</section>
+    <section>{selectedId ? (detail ? <WorkspacePanel detail={detail} token={token} refresh={refresh} onDeleted={onDeleted} setMessage={setMessage} /> : <p className="text-slate-300">Opening community…</p>) : <EmptyState />}</section>
   </div>;
 }
 
@@ -147,7 +150,7 @@ function CreateWorkspace({ token, onCreated }: { token: string; onCreated: (id: 
   </form>;
 }
 
-function WorkspacePanel({ detail, token, refresh, setMessage }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void>; setMessage: (value: string) => void }) {
+function WorkspacePanel({ detail, token, refresh, onDeleted, setMessage }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void>; onDeleted: () => Promise<void>; setMessage: (value: string) => void }) {
   const ownerTools = detail.capabilities.includes("manage_sources");
   const completed = detail.setup_steps.filter((step) => step.state === "completed").length;
   return <div className="space-y-6">
@@ -156,6 +159,7 @@ function WorkspacePanel({ detail, token, refresh, setMessage }: { detail: Worksp
     <WorkspaceIntelligencePanel detail={detail} token={token} />
     <Sources detail={detail} token={token} refresh={refresh} />
     {detail.capabilities.includes("invite_members") && <Invite workspaceId={detail.workspace.id} token={token} setMessage={setMessage} refresh={refresh} />}
+    {detail.capabilities.includes("delete_workspace") && <DeleteCommunity detail={detail} token={token} onDeleted={onDeleted} setMessage={setMessage} />}
   </div>;
 }
 
@@ -271,11 +275,34 @@ function TelegramHistoryImport({ detail, token, refresh }: { detail: WorkspaceDe
 function WorkspaceIntelligencePanel({ detail, token }: { detail: WorkspaceDetail; token: string }) {
   const [question, setQuestion] = useState(""); const [answer, setAnswer] = useState<IntelligenceAnswer | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
+  async function submitQuestion() {
+    if (busy || !question.trim()) return;
+    setBusy(true); setError(""); setAnswer(null);
+    try { setAnswer(await api<IntelligenceAnswer>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/intelligence/ask`, { method: "POST", body: JSON.stringify({ question }) })); }
+    catch (e) { setError(e instanceof Error ? e.message : "Comvoly could not answer that question."); }
+    finally { setBusy(false); }
+  }
   return <div className="rounded-3xl border border-[#ffcf4a]/25 bg-[#ffcf4a]/[.035] p-6"><Eyebrow>Interpret community knowledge</Eyebrow><h3 className="mt-2 text-xl font-semibold">Ask {detail.workspace.name}</h3><p className="mt-2 text-sm leading-6 text-slate-400">Pilot answers use only this workspace and always show their supporting community messages.</p>
-    <form className="mt-5 flex flex-col gap-3 sm:flex-row" onSubmit={async (event) => { event.preventDefault(); setBusy(true); setError(""); setAnswer(null); try { setAnswer(await api<IntelligenceAnswer>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/intelligence/ask`, { method: "POST", body: JSON.stringify({ question }) })); } catch (e) { setError(e instanceof Error ? e.message : "Comvoly could not answer that question."); } finally { setBusy(false); } }}><textarea required maxLength={1000} value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="What has this community said about…?" className="min-h-24 flex-1 rounded-2xl border border-white/15 bg-[#061124] p-4 text-sm" /><button disabled={busy} className="rounded-2xl bg-[#ffcf4a] px-6 py-3 font-bold text-[#07152b]">{busy ? "Interpreting…" : "Ask Comvoly"}</button></form>
+    <form className="mt-5 flex flex-col gap-3 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void submitQuestion(); }}><textarea required maxLength={1000} value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="What has this community said about…?" className="min-h-24 flex-1 rounded-2xl border border-white/15 bg-[#061124] p-4 text-sm" /><button disabled={busy || !question.trim()} aria-busy={busy} className="rounded-2xl bg-[#ffcf4a] px-6 py-3 font-bold text-[#07152b]">{busy ? "Interpreting…" : "Ask Comvoly"}</button></form>
     {error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
     {answer && <div className="mt-5 border-t border-white/10 pt-5"><p className="leading-7 text-slate-100">{answer.answer}</p><p className="mt-2 text-xs text-slate-500">Checked against {answer.evidence_count} authorised messages · extractive pilot</p><div className="mt-4 space-y-3">{answer.citations.map((item) => <article key={item.content_id} className="rounded-xl bg-[#061124] p-4"><div className="flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span>{item.source_name} · {item.author}</span><span>Message {item.external_item_id}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{item.excerpt}</p></article>)}</div></div>}
   </div>;
+}
+
+function DeleteCommunity({ detail, token, onDeleted, setMessage }: { detail: WorkspaceDetail; token: string; onDeleted: () => Promise<void>; setMessage: (value: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  async function remove() {
+    const confirmation = window.prompt(`Delete ${detail.workspace.name}?\n\nType the community name exactly to confirm. Its connections and member access will stop immediately.`);
+    if (confirmation === null) return;
+    if (confirmation.trim() !== detail.workspace.name) { setMessage("Community name did not match. Nothing was deleted."); return; }
+    setBusy(true); setMessage("");
+    try {
+      await api(API_URL, token, `/v2/workspaces/${detail.workspace.id}`, { method: "DELETE", body: JSON.stringify({ confirm_name: confirmation.trim() }) });
+      await onDeleted(); setMessage(`${detail.workspace.name} was deleted. Its pilot data remains recoverable by an administrator.`);
+    } catch (e) { setMessage(e instanceof Error ? e.message : "Could not delete this community."); }
+    finally { setBusy(false); }
+  }
+  return <div className="rounded-3xl border border-rose-300/20 bg-rose-300/[.035] p-6"><h3 className="text-lg font-semibold">Delete community</h3><p className="mt-2 text-sm leading-6 text-slate-400">Removes this community from every member and stops all connected sources. During the pilot, underlying data is retained for recovery.</p><button disabled={busy} aria-busy={busy} onClick={() => void remove()} className="mt-5 rounded-xl border border-rose-300/35 px-4 py-2.5 text-sm font-semibold text-rose-200 hover:bg-rose-300/10">{busy ? "Deleting…" : "Delete community"}</button></div>;
 }
 
 function Metric({ label, value }: { label: string; value: number }) { return <div className="rounded-xl bg-white/[.04] p-3"><p className="text-lg font-semibold">{value.toLocaleString()}</p><p className="mt-1 text-xs text-slate-500">{label}</p></div>; }

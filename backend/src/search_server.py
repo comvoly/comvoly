@@ -125,7 +125,7 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", ALLOWED_ORIGIN)
         self.send_header("Access-Control-Allow-Credentials", "true")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Comvoly-Account-Id, X-Telegram-Bot-Api-Secret-Token")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Cache-Control", "no-store")
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
@@ -239,6 +239,18 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.BAD_REQUEST, {"detail": "Invalid JSON request."})
         except Exception as error:
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"detail": str(error)})
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        path = urlparse(self.path).path
+        if not path.startswith("/v2/"):
+            self.send_json(HTTPStatus.NOT_FOUND, {"detail": "Not found."})
+            return
+        try:
+            self.v2_request("DELETE", path, self.read_json())
+        except RequestTooLarge as error:
+            self.send_json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"detail": str(error)})
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"detail": "Invalid JSON request."})
 
     def secure_cookies(self) -> bool:
         return os.getenv("COMVOLY_SECURE_COOKIES", "false").lower() == "true"

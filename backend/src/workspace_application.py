@@ -44,6 +44,42 @@ class WorkspaceApplication:
         workspace_id = self.store.create_workspace(principal, name, handle)
         return {"workspace_id": workspace_id}
 
+    def delete_workspace(self, principal: Principal, workspace_id: str,
+                         payload: dict[str, Any]) -> dict[str, Any]:
+        """Remove a workspace from every account while retaining recoverable pilot data."""
+        context = self._context(principal, workspace_id, "delete_workspace")
+        workspace = self.store.connection.execute(query(
+            "SELECT name FROM workspaces WHERE id=?"), (workspace_id,)).fetchone()
+        if workspace is None:
+            raise ApplicationError(404, "Workspace not found.")
+        name = str(workspace["name"])
+        if str(payload.get("confirm_name", "")).strip() != name:
+            raise ApplicationError(400, "Enter the community name exactly to confirm deletion.")
+        now = utc_now()
+        self.store._audit(workspace_id, context.account_id, "workspace.deleted",
+                          "workspace", workspace_id,
+                          metadata={"knowledge_retained_for_recovery": True})
+        configs = self.store.connection.execute(query("""SELECT source_connection_id
+            FROM telegram_connection_configs WHERE workspace_id=?"""), (workspace_id,)).fetchall()
+        for config in configs:
+            source_id = str(config["source_connection_id"])
+            self.store.connection.execute(query("""UPDATE telegram_connection_configs
+                SET activation_state='revoked', receives_messages=0, expected_chat_id=?, updated_at=?
+                WHERE source_connection_id=? AND workspace_id=?"""),
+                (f"revoked:{source_id}", now, source_id, workspace_id))
+        self.store.connection.execute(query("""UPDATE source_connections
+            SET state='revoked', health='unknown', updated_at=? WHERE workspace_id=?"""),
+            (now, workspace_id))
+        self.store.connection.execute(query("""UPDATE workspace_invitations
+            SET state='revoked', updated_at=? WHERE workspace_id=? AND state='pending'"""),
+            (now, workspace_id))
+        self.store.connection.execute(query("""UPDATE memberships SET state='revoked',
+            revoked_at=?, updated_at=? WHERE workspace_id=? AND state<>'revoked'"""),
+            (now, now, workspace_id))
+        self.store.connection.execute(query("""UPDATE workspaces SET lifecycle='deleted',
+            deleted_at=?, updated_at=? WHERE id=?"""), (now, now, workspace_id))
+        return {"workspace_id": workspace_id, "state": "deleted", "recoverable": True}
+
     def overview(self, principal: Principal, workspace_id: str) -> dict[str, Any]:
         context = self._context(principal, workspace_id, "use_intelligence")
         workspace = next((item for item in self.store.list_workspaces(principal) if item["id"] == workspace_id), None)

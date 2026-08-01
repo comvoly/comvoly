@@ -206,7 +206,7 @@ export default function Home() {
           <h2 className="text-xl font-semibold">Ask Comvoly</h2>
           <p className="mt-2 text-sm text-slate-400">Answers should be checked against the cited community messages.</p>
           <form onSubmit={ask} className="mt-5 flex flex-col gap-3 sm:flex-row">
-            <textarea value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={1000} required className="min-h-28 flex-1 resize-y rounded-2xl border border-white/10 bg-[#020817]/80 p-4 outline-none placeholder:text-slate-500 focus:border-[#f7c843]/60" placeholder="What has the community said about…?" />
+            <textarea value={question} onChange={(event) => setQuestion(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} maxLength={1000} required className="min-h-28 flex-1 resize-y rounded-2xl border border-white/10 bg-[#020817]/80 p-4 outline-none placeholder:text-slate-500 focus:border-[#f7c843]/60" placeholder="What has the community said about…?" />
             <button disabled={askState === "loading"} className="rounded-2xl bg-[#f7c843] px-6 py-4 font-semibold text-[#07152d] hover:bg-[#ffda6a] disabled:cursor-wait disabled:opacity-60">{askState === "loading" ? "Thinking…" : "Generate answer"}</button>
           </form>
           {askState === "error" && <p className="mt-4 rounded-xl border border-rose-300/20 bg-rose-300/10 p-4 text-sm text-rose-200">{askError}</p>}

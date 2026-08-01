@@ -17,3 +17,25 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+button,
+a[href] {
+  transition: transform 100ms ease, filter 100ms ease, background-color 150ms ease,
+    border-color 150ms ease, opacity 150ms ease;
+}
+
+button:active:not(:disabled),
+a[href]:active {
+  transform: translateY(1px) scale(0.98);
+  filter: brightness(0.9);
+}
+
+button:focus-visible,
+a[href]:focus-visible {
+  outline: 2px solid #ffcf4a;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  cursor: wait;
+}
