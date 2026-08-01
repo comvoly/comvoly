@@ -144,9 +144,20 @@ class WorkspaceApplication:
             raise ApplicationError(400, "Preview the Telegram export before importing it.")
         external_id = str(summary.get("external_community_id", "")).strip()
         display_name = str(summary.get("community_name", "Telegram community")).strip()[:120]
-        total = int(summary.get("message_count", 0))
-        if not external_id or total < 0:
+        total_value = summary.get("message_count")
+        total = int(total_value) if total_value is not None else None
+        if not external_id or (total is not None and total < 0):
             raise ApplicationError(400, "The Telegram export summary is invalid.")
+        idempotency_key = str(payload.get("idempotency_key") or new_id("upload")).strip()
+        if not idempotency_key or len(idempotency_key) > 200:
+            raise ApplicationError(400, "The import resume key is invalid.")
+        existing = self.store.connection.execute(query("""SELECT id FROM import_jobs
+            WHERE workspace_id=? AND idempotency_key=?"""),
+            (workspace_id, idempotency_key)).fetchone()
+        if existing is not None:
+            result = self._telegram_import_status(context, str(existing["id"]))
+            result["resumed"] = True
+            return result
         source_id = str(payload.get("source_id", "")).strip()
         source = self.store.connection.execute(query("""SELECT id, provider FROM source_connections
             WHERE id=? AND workspace_id=?"""), (source_id, workspace_id)).fetchone() if source_id else None
@@ -156,17 +167,23 @@ class WorkspaceApplication:
             raise ApplicationError(400, "Choose a Telegram source for this export.")
         else:
             self.store.connection.execute(query("""UPDATE source_connections SET external_community_id=?,
-                display_name=?, state='connecting', health='unknown', updated_at=?
+                display_name=?, state=CASE WHEN state='connected' THEN state ELSE 'connecting' END,
+                health=CASE WHEN state='connected' THEN health ELSE 'unknown' END, updated_at=?
                 WHERE id=? AND workspace_id=?"""),
                 (external_id, display_name, utc_now(), source_id, workspace_id))
-        job_id = self.store.create_import_job(context, source_id, "telegram_desktop_export",
-                                              str(payload.get("idempotency_key") or new_id("upload")))
+        bytes_total_value = payload.get("bytes_total")
+        bytes_total = int(bytes_total_value) if bytes_total_value is not None else None
+        if bytes_total is not None and bytes_total < 0:
+            raise ApplicationError(400, "The import file size is invalid.")
+        job_id = self.store.create_import_job(context, source_id, "telegram_desktop_export", idempotency_key)
         self.store.connection.execute(query("""UPDATE import_jobs SET state='uploading', stage='uploading',
-            progress_total=?, updated_at=? WHERE id=? AND workspace_id=?"""),
-            (total, utc_now(), job_id, workspace_id))
+            progress_total=?, bytes_total=?, started_at=?, updated_at=? WHERE id=? AND workspace_id=?"""),
+            (total, bytes_total, utc_now(), utc_now(), job_id, workspace_id))
         self.store.save_checkpoint(context, job_id, "preview", summary)
         self._mark_setup_step(context.account_id, workspace_id, "import_history", "in_progress")
-        return {"job_id": job_id, "source_id": source_id, "progress_total": total}
+        result = self._telegram_import_status(context, job_id)
+        result["resumed"] = False
+        return result
 
     def import_telegram_chunk(self, principal: Principal, workspace_id: str, job_id: str,
                               payload: dict[str, Any]) -> dict[str, Any]:
@@ -176,7 +193,7 @@ class WorkspaceApplication:
         if chunk_index < 0 or not isinstance(messages, list) or len(messages) > 500:
             raise ApplicationError(400, "Import chunks must contain at most 500 messages and a valid index.")
         job = self.store.connection.execute(query("""SELECT source_connection_id, progress_current,
-            progress_total, state FROM import_jobs WHERE id=? AND workspace_id=?"""),
+            progress_total, bytes_current, bytes_total, state FROM import_jobs WHERE id=? AND workspace_id=?"""),
             (job_id, workspace_id)).fetchone()
         if job is None:
             raise ApplicationError(404, "Import not found.")
@@ -216,28 +233,42 @@ class WorkspaceApplication:
                  item.source_created_at, checksum_item(item), now,
                  json.dumps(metadata, separators=(",", ":"), default=str)))
         current = int(job["progress_current"]) + len(normalised)
+        supplied_bytes = int(payload.get("bytes_processed", 0) or 0)
+        bytes_current = max(int(job["bytes_current"]), supplied_bytes)
         self.store.connection.execute(query("""UPDATE import_jobs SET state='storing', stage='storing',
-            progress_current=?, updated_at=? WHERE id=? AND workspace_id=?"""),
-            (current, now, job_id, workspace_id))
+            progress_current=?, bytes_current=?, updated_at=? WHERE id=? AND workspace_id=?"""),
+            (current, bytes_current, now, job_id, workspace_id))
         self.store.save_checkpoint(context, job_id, checkpoint_key,
-                                   {"message_count": len(messages), "stored_count": len(normalised)})
+                                   {"message_count": len(messages), "stored_count": len(normalised),
+                                    "bytes_processed": bytes_current})
         return {"job_id": job_id, "duplicate": False, "progress_current": current,
-                "progress_total": job["progress_total"]}
+                "progress_total": job["progress_total"], "bytes_current": bytes_current,
+                "bytes_total": job["bytes_total"]}
 
     def complete_telegram_import(self, principal: Principal, workspace_id: str,
-                                 job_id: str) -> dict[str, Any]:
+                                 job_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         context = self._context(principal, workspace_id, "import_history")
         job = self.store.connection.execute(query("""SELECT source_connection_id, progress_current,
             progress_total FROM import_jobs WHERE id=? AND workspace_id=?"""),
             (job_id, workspace_id)).fetchone()
         if job is None:
             raise ApplicationError(404, "Import not found.")
+        final_summary = (payload or {}).get("summary")
+        final_total = int(final_summary.get("message_count", job["progress_current"])) \
+            if isinstance(final_summary, dict) else int(job["progress_current"])
+        if final_total < int(job["progress_current"]):
+            final_total = int(job["progress_current"])
+        warnings = final_summary.get("warnings", []) if isinstance(final_summary, dict) else []
+        warning_count = min(len(warnings), 1000) if isinstance(warnings, list) else 0
         now = utc_now()
         self.store.connection.execute(query("""UPDATE import_jobs SET state='owner_review',
-            stage='owner_review', finished_at=?, updated_at=? WHERE id=? AND workspace_id=?"""),
-            (now, now, job_id, workspace_id))
+            stage='owner_review', progress_total=?, bytes_current=COALESCE(bytes_total, bytes_current),
+            warning_count=?, finished_at=?, updated_at=? WHERE id=? AND workspace_id=?"""),
+            (final_total, warning_count, now, now, job_id, workspace_id))
+        if isinstance(final_summary, dict):
+            self.store.save_checkpoint(context, job_id, "final_summary", final_summary)
         self.store.connection.execute(query("""UPDATE source_connections SET state='paused',
-            health='unknown', updated_at=? WHERE id=? AND workspace_id=?"""),
+            health='unknown', updated_at=? WHERE id=? AND workspace_id=? AND state<>'connected'"""),
             (now, str(job["source_connection_id"]), workspace_id))
         self.store.connection.execute(query("UPDATE workspaces SET lifecycle='review', updated_at=? WHERE id=?"),
                                       (now, workspace_id))
@@ -245,8 +276,54 @@ class WorkspaceApplication:
         self._mark_setup_step(context.account_id, workspace_id, "review_knowledge", "in_progress")
         self.store._audit(workspace_id, context.account_id, "telegram.import_ready_for_review",
                           "import_job", job_id, metadata={"stored": int(job["progress_current"])})
-        return {"job_id": job_id, "state": "owner_review",
-                "progress_current": int(job["progress_current"]), "progress_total": job["progress_total"]}
+        return self._telegram_import_status(context, job_id)
+
+    def telegram_import_status(self, principal: Principal, workspace_id: str,
+                               job_id: str) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "import_history")
+        return self._telegram_import_status(context, job_id)
+
+    def _telegram_import_status(self, context: Any, job_id: str) -> dict[str, Any]:
+        job = self.store.get_import_job(context, job_id)
+        if job is None:
+            raise ApplicationError(404, "Import not found.")
+        checkpoints = self.store.connection.execute(query("""SELECT checkpoint_key
+            FROM import_checkpoints WHERE job_id=? AND workspace_id=?
+            AND checkpoint_key LIKE 'chunk:%' ORDER BY checkpoint_key"""),
+            (job_id, context.workspace_id)).fetchall()
+        completed = sorted(int(str(row["checkpoint_key"]).split(":", 1)[1])
+                           for row in checkpoints)
+        result = dict(job)
+        result["job_id"] = result.pop("id")
+        result["completed_chunks"] = completed
+        result["source_id"] = result.pop("source_connection_id")
+        return result
+
+    def ingestion_health(self, principal: Principal, workspace_id: str) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "manage_sources")
+        rows = self.store.connection.execute(query("""SELECT s.id, s.provider, s.display_name,
+            s.state, s.health, s.created_at, s.updated_at,
+            c.activation_state, c.membership_status, c.receives_messages, c.last_received_at,
+            COUNT(i.id) AS stored_message_count,
+            COALESCE(SUM(CASE WHEN i.ingestion_method='telegram_bot_webhook' THEN 1 ELSE 0 END),0)
+                AS live_message_count,
+            COALESCE(SUM(CASE WHEN i.ingestion_method='telegram_desktop_export' THEN 1 ELSE 0 END),0)
+                AS historical_message_count,
+            MIN(i.source_created_at) AS history_start, MAX(i.source_created_at) AS history_end,
+            MAX(i.ingested_at) AS last_ingested_at
+            FROM source_connections s
+            LEFT JOIN telegram_connection_configs c ON c.source_connection_id=s.id
+                AND c.workspace_id=s.workspace_id
+            LEFT JOIN content_items i ON i.source_connection_id=s.id AND i.workspace_id=s.workspace_id
+            WHERE s.workspace_id=? AND s.state<>'revoked'
+            GROUP BY s.id, s.provider, s.display_name, s.state, s.health, s.created_at, s.updated_at,
+                c.activation_state, c.membership_status, c.receives_messages, c.last_received_at
+            ORDER BY s.created_at"""), (workspace_id,)).fetchall()
+        sources = [dict(row) for row in rows]
+        return {"workspace_id": context.workspace_id, "sources": sources,
+                "stored_message_count": sum(int(row["stored_message_count"]) for row in sources),
+                "last_ingested_at": max((str(row["last_ingested_at"]) for row in sources
+                                         if row["last_ingested_at"]), default=None)}
 
     def prepare_telegram_live(self, principal: Principal, workspace_id: str,
                               payload: dict[str, Any]) -> dict[str, Any]:

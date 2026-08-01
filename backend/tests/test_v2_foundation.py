@@ -386,6 +386,56 @@ class V2FoundationTests(unittest.TestCase):
         self.assertEqual(404, adapter.dispatch("POST", f"/v2/workspaces/ws_b/telegram/imports/{started['job_id']}/complete",
             {}, owner_headers)[0])
 
+    def test_streaming_import_resumes_reports_health_and_preserves_live_source(self) -> None:
+        self.database.execute("""UPDATE source_connections SET provider='telegram', state='connected',
+            health='healthy' WHERE id='src_a'""")
+        adapter = V2HTTPAdapter(self.database)
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_a"}
+        other_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_b"}
+        document = json.loads((Path(__file__).parent / "fixtures" / "telegram_small.json").read_text(encoding="utf-8"))
+        summary = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/preview",
+            {"export": document}, owner_headers)[1]
+        start_payload = {"summary": {**summary, "message_count": None}, "source_id": "src_a",
+                         "idempotency_key": "stream-file-fingerprint", "bytes_total": 4_000_000_000}
+        status, started = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/imports",
+                                           start_payload, owner_headers)
+        self.assertEqual((201, False, None, 4_000_000_000),
+                         (status, started["resumed"], started["progress_total"], started["bytes_total"]))
+        chunk_path = f"/v2/workspaces/ws_a/telegram/imports/{started['job_id']}/chunks"
+        progress = adapter.dispatch("POST", chunk_path,
+            {"chunk_index": 0, "messages": document["messages"], "bytes_processed": 12345}, owner_headers)[1]
+        self.assertEqual((3, 12345), (progress["progress_current"], progress["bytes_current"]))
+
+        resumed = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/imports",
+                                   start_payload, owner_headers)[1]
+        self.assertEqual((started["job_id"], True, [0], 3),
+                         (resumed["job_id"], resumed["resumed"], resumed["completed_chunks"],
+                          resumed["progress_current"]))
+        status_path = f"/v2/workspaces/ws_a/telegram/imports/{started['job_id']}"
+        self.assertEqual([0], adapter.dispatch("GET", status_path, {}, owner_headers)[1]["completed_chunks"])
+        self.assertEqual(404, adapter.dispatch("GET",
+            f"/v2/workspaces/ws_b/telegram/imports/{started['job_id']}", {}, other_headers)[0])
+
+        complete_path = f"{status_path}/complete"
+        completed = adapter.dispatch("POST", complete_path, {"summary": summary}, owner_headers)[1]
+        self.assertEqual(("owner_review", 3), (completed["state"], completed["progress_total"]))
+        self.assertEqual(("connected", "healthy"), tuple(self.database.execute(
+            "SELECT state, health FROM source_connections WHERE id='src_a'").fetchone()))
+
+        health = adapter.dispatch("GET", "/v2/workspaces/ws_a/ingestion", {}, owner_headers)[1]
+        source = health["sources"][0]
+        self.assertEqual((3, 0, 3), (source["stored_message_count"],
+                                     source["live_message_count"], source["historical_message_count"]))
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        member_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                          "X-Comvoly-Account-Id": "acct_member"}
+        self.assertEqual(404, adapter.dispatch("GET", "/v2/workspaces/ws_a/ingestion",
+                                               {}, member_headers)[0])
+        self.assertEqual(404, adapter.dispatch("GET", "/v2/workspaces/ws_b/ingestion",
+                                               {}, owner_headers)[0])
+
     def test_telegram_live_webhook_is_secret_verified_idempotent_and_workspace_bound(self) -> None:
         self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")
         self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_b'")

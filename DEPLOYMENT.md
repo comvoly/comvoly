@@ -110,10 +110,18 @@ changed.
 
 ### Telegram Desktop history import
 
-The v2 development API accepts a Telegram Desktop `result.json` through the
-workspace-authorised preview/start/chunk/complete endpoints. The frontend limits the
-pilot file to 25 MiB, while `COMVOLY_MAX_JSON_BYTES` defaults to 30 MiB. Each batch is
-checkpointed and duplicate message IDs are upserted within one Telegram source.
+The v2 development API accepts a Telegram Desktop `result.json` through
+workspace-authorised start/status/chunk/complete endpoints. The frontend reads files
+in 1 MiB sections and uploads 200-record batches rather than loading the complete file
+or sending it through the API's whole-request JSON limit. It supports files up to
+Telegram's 4 GB export ceiling, subject to browser, device and network performance.
+Each batch and byte watermark is checkpointed; selecting the same file resumes the
+existing job, and duplicate message IDs are upserted within one Telegram source.
+
+The owner-only `/v2/workspaces/{workspace_id}/ingestion` endpoint reports whether each
+source is receiving messages, its last ingestion time and separate live/historical
+counts. The development account UI polls this every ten seconds. Historical imports
+must not change an already-connected live source to paused.
 
 This import currently stores message text and metadata plus a media-path inventory; it
 does not upload the media directory. Do not configure a bot token in this environment

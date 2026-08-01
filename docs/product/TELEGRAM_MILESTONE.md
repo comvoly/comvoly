@@ -38,8 +38,10 @@ The owner journey now:
   Replaying a completed chunk is a no-op.
 - Import jobs, checkpoints, content, sources, spaces and conversations are all bound to
   the server-authorised workspace.
-- Browser JSON requests default to a 30 MiB backend limit; the current UI applies a
-  25 MiB file limit so the owner receives a useful error before uploading.
+- The current UI streams the JSON file in 1 MiB reads and sends bounded 200-record API
+  batches. It does not load or submit the full archive as one JSON request.
+- A deterministic file fingerprint and server checkpoints allow the owner to select
+  the same export and resume after a browser, network or API interruption.
 
 ## Media boundary
 
@@ -80,5 +82,9 @@ pending bot activation. The isolated v2 API and unchanged production API both re
 healthy after deployment.
 
 The next live-ingestion slice is now implemented behind feature gates; see
-[Telegram live pilot milestone](TELEGRAM_LIVE_PILOT.md). External BotFather registration
-and real-group activation remain deliberately unperformed.
+[Telegram live pilot milestone](TELEGRAM_LIVE_PILOT.md). `@ComvolyBot` and its isolated
+development webhook are now active; production remains unchanged.
+
+Large-file streaming, explicit ingestion health and live-versus-historical visibility
+are documented in
+[Ingestion visibility and streaming import](INGESTION_VISIBILITY_AND_STREAMING_IMPORT.md).

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { api, ComvolySession, WorkspaceDetail, WorkspaceSummary } from "@/lib/comvoly-api";
 import { AuthSession, getIdentityToken, getSession, signIn, signOut, signUp } from "@/lib/neon-auth";
+import { streamTelegramExport, telegramFileFingerprint, TelegramStreamSummary } from "@/lib/telegram-stream";
 
 const AUTH_URL = process.env.NEXT_PUBLIC_NEON_AUTH_URL;
 const API_URL = process.env.NEXT_PUBLIC_COMVOLY_API_URL || "https://api.comvoly.com";
@@ -25,6 +26,19 @@ type IntelligenceAnswer = {
   question: string; answer: string; evidence_count: number; mode: string;
   citations: Array<{ content_id: string; source_name: string; provider: string;
     external_item_id: string; author: string; source_created_at: string; excerpt: string }>;
+};
+
+type IngestionSource = {
+  id: string; provider: string; display_name: string; state: string; health: string;
+  receives_messages?: boolean; last_received_at?: string | null; stored_message_count: number;
+  live_message_count: number; historical_message_count: number; history_start?: string | null;
+  history_end?: string | null; last_ingested_at?: string | null;
+};
+type IngestionHealth = { workspace_id: string; stored_message_count: number; last_ingested_at: string | null; sources: IngestionSource[] };
+type TelegramImportStatus = {
+  job_id: string; source_id: string; state: string; stage: string; progress_current: number;
+  progress_total: number | null; bytes_current: number; bytes_total: number | null;
+  completed_chunks: number[]; resumed?: boolean;
 };
 
 export default function AccountPage() {
@@ -157,6 +171,7 @@ function WorkspacePanel({ detail, token, refresh, onDeleted, setMessage }: { det
     <div className="rounded-3xl border border-white/10 bg-white/[.035] p-6"><Eyebrow>{detail.role}</Eyebrow><h2 className="mt-2 text-3xl font-semibold">{detail.workspace.name}</h2><p className="mt-2 text-slate-400">{detail.workspace.lifecycle === "setup" ? "Setting up community intelligence" : detail.workspace.lifecycle}</p></div>
     {ownerTools && <div className="rounded-3xl border border-[#ffcf4a]/20 bg-[#ffcf4a]/[.04] p-6"><div className="flex items-center justify-between gap-4"><div><h3 className="text-lg font-semibold">Owner setup</h3><p className="mt-1 text-sm text-slate-400">{completed} of {detail.setup_steps.length} steps complete</p></div><span className="text-2xl font-bold text-[#ffcf4a]">{detail.setup_steps.length ? Math.round(completed / detail.setup_steps.length * 100) : 0}%</span></div><div className="mt-5 space-y-2">{detail.setup_steps.map((step) => <SetupStep key={step.step_key} step={step} workspaceId={detail.workspace.id} token={token} refresh={refresh} />)}</div></div>}
     <WorkspaceIntelligencePanel detail={detail} token={token} />
+    {ownerTools && <IngestionHealthPanel detail={detail} token={token} />}
     <Sources detail={detail} token={token} refresh={refresh} />
     {detail.capabilities.includes("invite_members") && <Invite workspaceId={detail.workspace.id} token={token} setMessage={setMessage} refresh={refresh} />}
     {detail.capabilities.includes("delete_workspace") && <DeleteCommunity detail={detail} token={token} onDeleted={onDeleted} setMessage={setMessage} />}
@@ -166,6 +181,32 @@ function WorkspacePanel({ detail, token, refresh, onDeleted, setMessage }: { det
 const stepLabels: Record<string, string> = { community_details: "Confirm community details", connect_source: "Plan a platform connection", import_history: "Import historical knowledge", review_knowledge: "Review imported knowledge", invite_members: "Invite your first member" };
 function SetupStep({ step, workspaceId, token, refresh }: { step: WorkspaceDetail["setup_steps"][number]; workspaceId: string; token: string; refresh: () => Promise<void> }) {
   return <div className="flex items-center justify-between gap-3 rounded-xl bg-white/[.035] px-4 py-3"><div><p className="text-sm font-medium">{stepLabels[step.step_key] || step.step_key}</p><p className="mt-1 text-xs capitalize text-slate-500">{step.state.replace("_", " ")}</p></div>{step.state !== "completed" && <button onClick={async () => { await api(API_URL, token, `/v2/workspaces/${workspaceId}/setup/${step.step_key}`, { method: "POST", body: JSON.stringify({ state: "completed" }) }); await refresh(); }} className="text-xs font-semibold text-[#ffcf4a]">Mark done</button>}</div>;
+}
+
+function IngestionHealthPanel({ detail, token }: { detail: WorkspaceDetail; token: string }) {
+  const [health, setHealth] = useState<IngestionHealth | null>(null);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    try {
+      setHealth(await api<IngestionHealth>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/ingestion`));
+      setError("");
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not load ingestion status."); }
+  }, [detail.workspace.id, token]);
+  useEffect(() => {
+    const initial = window.setTimeout(() => void load(), 0);
+    const timer = window.setInterval(() => void load(), 10000);
+    return () => { window.clearTimeout(initial); window.clearInterval(timer); };
+  }, [load]);
+  return <div className="rounded-3xl border border-white/10 bg-white/[.035] p-6">
+    <div className="flex flex-wrap items-start justify-between gap-4"><div><Eyebrow>Knowledge ingestion</Eyebrow><h3 className="mt-2 text-xl font-semibold">Is Comvoly receiving messages?</h3><p className="mt-2 text-sm text-slate-400">This updates automatically every 10 seconds.</p></div>{health && <div className="text-right"><p className="text-2xl font-semibold">{health.stored_message_count.toLocaleString()}</p><p className="text-xs text-slate-500">messages stored</p></div>}</div>
+    {error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
+    {!health && !error && <p className="mt-4 text-sm text-slate-400">Checking ingestion status…</p>}
+    <div className="mt-5 space-y-3">{health?.sources.map((source) => {
+      const live = source.state === "connected" && source.receives_messages;
+      const connecting = source.state === "connecting";
+      return <div key={source.id} className="rounded-2xl border border-white/10 bg-[#061124] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{source.display_name}</p><p className="mt-1 text-xs capitalize text-slate-500">{source.provider}</p></div><span className={`rounded-full px-3 py-1 text-xs font-semibold ${live ? "bg-emerald-400/10 text-emerald-200" : connecting ? "bg-amber-300/10 text-amber-100" : "bg-rose-300/10 text-rose-200"}`}>{live ? "Receiving messages" : connecting ? "Connecting" : "Needs attention"}</span></div><div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Live messages" value={source.live_message_count} /><Metric label="Imported history" value={source.historical_message_count} /><Metric label="All stored" value={source.stored_message_count} /><div className="rounded-xl bg-white/[.04] p-3"><p className="text-sm font-semibold">{formatDateTime(source.last_ingested_at || null)}</p><p className="mt-1 text-xs text-slate-500">Last received</p></div></div>{source.historical_message_count > 0 && <p className="mt-3 text-xs text-slate-500">Historical coverage: {formatDate(source.history_start || null)} – {formatDate(source.history_end || null)}</p>}</div>;
+    })}</div>
+  </div>;
 }
 
 function Sources({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
@@ -216,7 +257,8 @@ function TelegramConnectWizard({ detail, token, refresh }: { detail: WorkspaceDe
   </div>;
 }
 
-function TelegramHistoryImport({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
+/** @deprecated Retained temporarily as a compatibility reference for the pre-streaming pilot. */
+export function LegacyTelegramHistoryImport({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
   const [document, setDocument] = useState<Record<string, unknown> | null>(null);
   const [preview, setPreview] = useState<TelegramPreview | null>(null);
   const [fileName, setFileName] = useState("");
@@ -272,6 +314,84 @@ function TelegramHistoryImport({ detail, token, refresh }: { detail: WorkspaceDe
   </div>;
 }
 
+function TelegramHistoryImport({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [summary, setSummary] = useState<TelegramStreamSummary | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [stage, setStage] = useState("");
+  const [bytesRead, setBytesRead] = useState(0);
+  const [messagesRead, setMessagesRead] = useState(0);
+  const [stored, setStored] = useState(0);
+  const [wasResumed, setWasResumed] = useState(false);
+  const [error, setError] = useState("");
+  const telegramSource = detail.sources.find((source) => source.provider === "telegram");
+
+  function chooseFile(event: ChangeEvent<HTMLInputElement>) {
+    const selected = event.target.files?.[0] || null;
+    setError(""); setSummary(null); setStage(""); setBytesRead(0); setMessagesRead(0); setStored(0); setWasResumed(false);
+    if (selected && selected.size > 4 * 1024 * 1024 * 1024) {
+      setFile(null); setError("Choose Telegram's result.json file up to the 4 GB export ceiling."); return;
+    }
+    setFile(selected);
+  }
+
+  async function importHistory() {
+    if (!file) return;
+    setBusy(true); setError(""); setSummary(null); setStored(0); setStage("Preparing a resumable import…");
+    let job: TelegramImportStatus | null = null;
+    let completed = new Set<number>();
+    try {
+      const fingerprint = await telegramFileFingerprint(file);
+      const result = await streamTelegramExport(file, {
+        onHeader: async (header) => {
+          job = await api<TelegramImportStatus>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/imports`, {
+            method: "POST", body: JSON.stringify({
+              summary: { ...header, message_count: null, service_event_count: 0, participant_count: 0,
+                media_count: 0, history_start: null, history_end: null, warnings: [] },
+              source_id: telegramSource?.id, idempotency_key: fingerprint, bytes_total: file.size,
+            }),
+          });
+          completed = new Set(job.completed_chunks || []);
+          setStored(job.progress_current || 0); setWasResumed(Boolean(job.resumed && completed.size));
+          setStage(completed.size ? "Resuming from the last completed batch…" : "Reading and securely importing messages…");
+        },
+        onBatch: async (messages, chunkIndex, processed) => {
+          if (!job) throw new Error("The import could not be started.");
+          if (completed.has(chunkIndex)) return;
+          const activeJob = job as TelegramImportStatus;
+          const next = await api<TelegramImportStatus>(API_URL, token,
+            `/v2/workspaces/${detail.workspace.id}/telegram/imports/${activeJob.job_id}/chunks`, {
+              method: "POST", body: JSON.stringify({ chunk_index: chunkIndex, messages, bytes_processed: processed }),
+            });
+          setStored(next.progress_current);
+        },
+        onProgress: (processed, _total, discovered) => { setBytesRead(processed); setMessagesRead(discovered); },
+      });
+      if (!job) throw new Error("The Telegram export did not contain an importable chat.");
+      const activeJob = job as TelegramImportStatus;
+      setStage("Finishing and verifying the import…");
+      const finished = await api<TelegramImportStatus>(API_URL, token,
+        `/v2/workspaces/${detail.workspace.id}/telegram/imports/${activeJob.job_id}/complete`, {
+          method: "POST", body: JSON.stringify({ summary: result }),
+        });
+      setStored(finished.progress_current); setSummary(result); setStage("Import complete"); await refresh();
+    } catch (e) {
+      setStage("Import paused safely");
+      setError(`${e instanceof Error ? e.message : "The import stopped."} Choose the same file and try again to resume.`);
+    } finally { setBusy(false); }
+  }
+
+  const percentage = file?.size ? Math.min(100, Math.round(bytesRead / file.size * 100)) : 0;
+  return <div className="mt-7 border-t border-white/10 pt-6">
+    <Eyebrow>Telegram history</Eyebrow><h4 className="mt-2 text-lg font-semibold">Import the knowledge from before the bot joins</h4>
+    <p className="mt-2 text-sm leading-6 text-slate-400">In Telegram Desktop, export the intended group as machine-readable JSON and choose its <code className="text-slate-300">result.json</code>. Comvoly reads it in small sections, so large exports do not have to fit in your laptop&apos;s memory. Media references are counted; the media files themselves are not uploaded yet.</p>
+    <label className="mt-4 block cursor-pointer rounded-2xl border border-dashed border-white/20 bg-[#061124] p-5 text-center text-sm hover:border-[#ffcf4a]/60"><span className="font-semibold text-[#ffcf4a]">Choose Telegram result.json</span><input type="file" accept="application/json,.json" onChange={chooseFile} className="sr-only" /></label>
+    {file && <div className="mt-4 rounded-2xl border border-white/10 bg-[#061124] p-4"><div className="flex flex-wrap justify-between gap-3"><div><p className="font-semibold">{file.name}</p><p className="mt-1 text-xs text-slate-500">{formatBytes(file.size)} · remains on this device while processed</p></div><button disabled={busy || Boolean(summary)} onClick={() => void importHistory()} className="rounded-xl bg-[#ffcf4a] px-5 py-2.5 text-sm font-bold text-[#07152b] disabled:opacity-60">{busy ? "Importing…" : error ? "Resume import" : summary ? "Import complete" : "Analyse and import"}</button></div>{stage && <div className="mt-4"><div className="flex justify-between gap-3 text-xs text-slate-400"><span>{stage}{wasResumed ? " (resumed)" : ""}</span><span>{percentage}%</span></div><div className="mt-2 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-[#ffcf4a] transition-all" style={{ width: `${percentage}%` }} /></div><p className="mt-2 text-xs text-slate-500">Read {formatBytes(bytesRead)} · {messagesRead.toLocaleString()} found · {stored.toLocaleString()} stored</p></div>}</div>}
+    {error && <p className="mt-3 rounded-xl bg-rose-400/10 p-3 text-sm text-rose-200">{error}</p>}
+    {summary && <div className="mt-5 rounded-2xl border border-emerald-300/20 bg-emerald-300/[.04] p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-semibold">{summary.community_name}</p><p className="mt-1 text-xs text-slate-500">{summary.export_type} · {summary.parser_version}</p></div><span className="rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-200">Imported</span></div><div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4"><Metric label="Messages" value={summary.message_count} /><Metric label="People" value={summary.participant_count} /><Metric label="Media refs" value={summary.media_count} /><Metric label="Service events" value={summary.service_event_count} /></div><p className="mt-4 text-xs text-slate-500">{formatDate(summary.history_start)} – {formatDate(summary.history_end)}</p>{summary.warnings.map((warning) => <p key={warning} className="mt-2 text-xs text-amber-200">{warning}</p>)}</div>}
+  </div>;
+}
+
 function WorkspaceIntelligencePanel({ detail, token }: { detail: WorkspaceDetail; token: string }) {
   const [question, setQuestion] = useState(""); const [answer, setAnswer] = useState<IntelligenceAnswer | null>(null);
   const [busy, setBusy] = useState(false); const [error, setError] = useState("");
@@ -307,6 +427,13 @@ function DeleteCommunity({ detail, token, onDeleted, setMessage }: { detail: Wor
 
 function Metric({ label, value }: { label: string; value: number }) { return <div className="rounded-xl bg-white/[.04] p-3"><p className="text-lg font-semibold">{value.toLocaleString()}</p><p className="mt-1 text-xs text-slate-500">{label}</p></div>; }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleDateString("en-GB") : "Unknown date"; }
+function formatDateTime(value: string | null) { return value ? new Date(value).toLocaleString("en-GB") : "None yet"; }
+function formatBytes(value: number) {
+  if (!value) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+  return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
+}
 
 function Invite({ workspaceId, token, setMessage, refresh }: { workspaceId: string; token: string; setMessage: (value: string) => void; refresh: () => Promise<void> }) {
   const [role, setRole] = useState("member"); const [email, setEmail] = useState(""); const [link, setLink] = useState("");

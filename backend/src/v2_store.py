@@ -163,7 +163,8 @@ class ComvolyStore:
     def get_import_job(self, context: WorkspaceContext, job_id: str) -> dict[str, Any] | None:
         context.require("import_history")
         row = self.connection.execute(query("""SELECT id, source_connection_id, job_type, state, stage,
-            attempt, progress_current, progress_total, warning_count, failure_count, error_code,
+            attempt, progress_current, progress_total, bytes_current, bytes_total,
+            warning_count, failure_count, error_code, error_detail,
             created_at, started_at, updated_at, finished_at FROM import_jobs
             WHERE workspace_id = ? AND id = ?"""), (context.workspace_id, job_id)).fetchone()
         return dict(row) if row else None

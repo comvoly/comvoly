@@ -101,6 +101,8 @@ class V2HTTPAdapter:
                     return 200, self.application.delete_workspace(principal, workspace_id, payload)
                 if method == "GET" and parts[3:] == ["members"]:
                     return 200, {"members": self.application.members(principal, workspace_id)}
+                if method == "GET" and parts[3:] == ["ingestion"]:
+                    return 200, self.application.ingestion_health(principal, workspace_id)
                 if method == "POST" and parts[3:] == ["invitations"]:
                     return 201, self.application.invite(principal, workspace_id, payload)
                 if method == "POST" and parts[3:] == ["sources"]:
@@ -135,6 +137,9 @@ class V2HTTPAdapter:
                 if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
                         and parts[6] == "complete"):
                     return 200, self.application.complete_telegram_import(
+                        principal, workspace_id, parts[5], payload)
+                if (method == "GET" and len(parts) == 6 and parts[3:5] == ["telegram", "imports"]):
+                    return 200, self.application.telegram_import_status(
                         principal, workspace_id, parts[5])
             return 404, {"detail": "Not found."}
         except ApplicationError as error:

@@ -30,6 +30,7 @@ For phone review, open the consolidated
 11. [Owner workspace and invited-member milestone](OWNER_MEMBER_MILESTONE.md)
 12. [Founder Telegram history milestone](TELEGRAM_MILESTONE.md)
 13. [Telegram live pilot milestone](TELEGRAM_LIVE_PILOT.md)
+14. [Ingestion visibility and streaming import](INGESTION_VISIBILITY_AND_STREAMING_IMPORT.md)
 
 ## Package status
 
@@ -39,7 +40,7 @@ For phone review, open the consolidated
 | Owner and member journeys | Implemented in isolated development | Founder acceptance testing |
 | Account/workspace model | Implemented | Production identity rollout decision |
 | Telegram ongoing connection | Secure webhook and onboarding implemented behind gates | BotFather registration and policy review |
-| Telegram history import | Implemented for JSON/text | Founder export and media acceptance |
+| Telegram history import | Streaming, resumable JSON/text import implemented | Founder large-export acceptance; media remains separate |
 | Discord connector | Feasible and specified | Test server and privileged intents |
 | Skool connector | Conditional | Approved API/export access |
 | Media pipeline | Specified in stages | Storage/provider selection |
