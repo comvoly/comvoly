@@ -21,7 +21,8 @@ class MigrationRendererTests(unittest.TestCase):
         self.assertIn("v2_account_workspace_experience", sql)
         self.assertIn("v2_telegram_live_pilot", sql)
         self.assertIn("v2_telegram_global_webhook_binding", sql)
-        self.assertEqual(sql.count("ON CONFLICT (version) DO NOTHING"), 4)
+        self.assertIn("v2_import_review_activation", sql)
+        self.assertEqual(sql.count("ON CONFLICT (version) DO NOTHING"), 5)
         self.assertNotIn("INSERT INTO accounts", sql)
         self.assertNotIn("INSERT INTO workspaces", sql)
 

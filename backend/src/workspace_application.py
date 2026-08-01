@@ -222,16 +222,27 @@ class WorkspaceApplication:
             self.store.connection.execute(query("""INSERT INTO content_items
                 (id, workspace_id, source_connection_id, source_space_id, conversation_id,
                  external_item_id, item_type, author_external_id, body_text, source_created_at,
-                 source_checksum, ingestion_method, ingested_at, metadata_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'telegram_desktop_export', ?, ?)
+                 source_checksum, ingestion_method, ingested_at, metadata_json, import_job_id, review_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'telegram_desktop_export', ?, ?, ?, 'staged')
                 ON CONFLICT(source_connection_id, external_item_id) DO UPDATE SET
-                author_external_id=excluded.author_external_id, body_text=excluded.body_text,
-                source_created_at=excluded.source_created_at, source_checksum=excluded.source_checksum,
-                ingested_at=excluded.ingested_at, metadata_json=excluded.metadata_json"""),
+                author_external_id=CASE WHEN content_items.review_state='staged'
+                    THEN excluded.author_external_id ELSE content_items.author_external_id END,
+                body_text=CASE WHEN content_items.review_state='staged'
+                    THEN excluded.body_text ELSE content_items.body_text END,
+                source_created_at=CASE WHEN content_items.review_state='staged'
+                    THEN excluded.source_created_at ELSE content_items.source_created_at END,
+                source_checksum=CASE WHEN content_items.review_state='staged'
+                    THEN excluded.source_checksum ELSE content_items.source_checksum END,
+                ingested_at=CASE WHEN content_items.review_state='staged'
+                    THEN excluded.ingested_at ELSE content_items.ingested_at END,
+                metadata_json=CASE WHEN content_items.review_state='staged'
+                    THEN excluded.metadata_json ELSE content_items.metadata_json END,
+                import_job_id=CASE WHEN content_items.review_state='staged'
+                    THEN excluded.import_job_id ELSE content_items.import_job_id END"""),
                 (new_id("item"), workspace_id, source_id, space_id, conversation_id,
                  item.external_item_id, item.item_type, item.author_external_id, item.body_text,
                  item.source_created_at, checksum_item(item), now,
-                 json.dumps(metadata, separators=(",", ":"), default=str)))
+                 json.dumps(metadata, separators=(",", ":"), default=str), job_id))
         current = int(job["progress_current"]) + len(normalised)
         supplied_bytes = int(payload.get("bytes_processed", 0) or 0)
         bytes_current = max(int(job["bytes_current"]), supplied_bytes)
@@ -281,6 +292,116 @@ class WorkspaceApplication:
     def telegram_import_status(self, principal: Principal, workspace_id: str,
                                job_id: str) -> dict[str, Any]:
         context = self._context(principal, workspace_id, "import_history")
+        return self._telegram_import_status(context, job_id)
+
+    def telegram_import_review(self, principal: Principal, workspace_id: str,
+                               job_id: str) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "import_history")
+        status = self._telegram_import_status(context, job_id)
+        summary_row = self.store.connection.execute(query("""SELECT cursor_json
+            FROM import_checkpoints WHERE job_id=? AND workspace_id=?
+            AND checkpoint_key='final_summary'"""), (job_id, workspace_id)).fetchone()
+        summary: dict[str, Any] = {}
+        if summary_row is not None:
+            try:
+                parsed = json.loads(str(summary_row["cursor_json"]))
+                summary = parsed if isinstance(parsed, dict) else {}
+            except (TypeError, ValueError):
+                summary = {}
+        counts = self.store.connection.execute(query("""SELECT COUNT(*) AS message_count,
+            COUNT(DISTINCT author_external_id) AS participant_count,
+            MIN(source_created_at) AS history_start, MAX(source_created_at) AS history_end
+            FROM content_items WHERE workspace_id=? AND import_job_id=?"""),
+            (workspace_id, job_id)).fetchone()
+        samples = self.store.connection.execute(query("""SELECT id, external_item_id,
+            author_external_id, author_display_name, body_text, source_created_at, review_state
+            FROM content_items WHERE workspace_id=? AND import_job_id=?
+            ORDER BY source_created_at DESC LIMIT 5"""), (workspace_id, job_id)).fetchall()
+        inventory = dict(counts)
+        inventory["overlap_count"] = max(0, int(status["progress_current"]) - int(inventory["message_count"]))
+        state = str(status["state"])
+        return {**status, "summary": summary, "inventory": inventory,
+                "samples": [dict(row) for row in samples],
+                "can_accept": state == "owner_review",
+                "can_cancel": state in {"created", "uploading", "validating", "parsing", "storing", "owner_review", "failed", "partially_completed"},
+                "can_restart": state in {"cancelled", "failed", "rejected", "partially_completed"}}
+
+    def accept_telegram_import(self, principal: Principal, workspace_id: str,
+                               job_id: str) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "import_history")
+        job = self.store.connection.execute(query("""SELECT state FROM import_jobs
+            WHERE id=? AND workspace_id=?"""), (job_id, workspace_id)).fetchone()
+        if job is None:
+            raise ApplicationError(404, "Import not found.")
+        if str(job["state"]) != "owner_review":
+            raise ApplicationError(409, "Only an import awaiting owner review can be accepted.")
+        now = utc_now()
+        self.store.connection.execute(query("""UPDATE content_items SET review_state='active'
+            WHERE workspace_id=? AND import_job_id=? AND review_state='staged'"""),
+            (workspace_id, job_id))
+        self.store.connection.execute(query("""UPDATE import_jobs SET state='active', stage='active',
+            updated_at=?, finished_at=COALESCE(finished_at, ?) WHERE id=? AND workspace_id=?"""),
+            (now, now, job_id, workspace_id))
+        self.store.connection.execute(query("UPDATE workspaces SET lifecycle='active', updated_at=? WHERE id=?"),
+                                      (now, workspace_id))
+        self._mark_setup_step(context.account_id, workspace_id, "review_knowledge", "completed")
+        self.store._audit(workspace_id, context.account_id, "telegram.import_accepted",
+                          "import_job", job_id)
+        return self.telegram_import_review(principal, workspace_id, job_id)
+
+    def cancel_telegram_import(self, principal: Principal, workspace_id: str,
+                               job_id: str) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "import_history")
+        job = self.store.connection.execute(query("""SELECT state FROM import_jobs
+            WHERE id=? AND workspace_id=?"""), (job_id, workspace_id)).fetchone()
+        if job is None:
+            raise ApplicationError(404, "Import not found.")
+        if str(job["state"]) not in {"created", "uploading", "validating", "parsing", "storing", "owner_review", "failed", "partially_completed"}:
+            raise ApplicationError(409, "This import can no longer be cancelled.")
+        now = utc_now()
+        item_rows = self.store.connection.execute(query("""SELECT id FROM content_items
+            WHERE workspace_id=? AND import_job_id=? AND review_state='staged'"""),
+            (workspace_id, job_id)).fetchall()
+        item_ids = [str(row["id"]) for row in item_rows]
+        for item_id in item_ids:
+            self.store.connection.execute(query("DELETE FROM media_assets WHERE workspace_id=? AND content_item_id=?"),
+                                          (workspace_id, item_id))
+        self.store.connection.execute(query("""DELETE FROM content_items WHERE workspace_id=?
+            AND import_job_id=? AND review_state='staged'"""), (workspace_id, job_id))
+        self.store.connection.execute(query("""UPDATE import_jobs SET state='cancelled', stage='cancelled',
+            error_code=NULL, error_detail=NULL, finished_at=?, updated_at=? WHERE id=? AND workspace_id=?"""),
+            (now, now, job_id, workspace_id))
+        self.store._audit(workspace_id, context.account_id, "telegram.import_cancelled",
+                          "import_job", job_id, metadata={"staged_items_removed": len(item_ids)})
+        return self.telegram_import_review(principal, workspace_id, job_id)
+
+    def restart_telegram_import(self, principal: Principal, workspace_id: str,
+                                job_id: str) -> dict[str, Any]:
+        context = self._context(principal, workspace_id, "import_history")
+        job = self.store.connection.execute(query("""SELECT state FROM import_jobs
+            WHERE id=? AND workspace_id=?"""), (job_id, workspace_id)).fetchone()
+        if job is None:
+            raise ApplicationError(404, "Import not found.")
+        if str(job["state"]) not in {"cancelled", "failed", "rejected", "partially_completed"}:
+            raise ApplicationError(409, "This import does not need restarting.")
+        now = utc_now()
+        item_rows = self.store.connection.execute(query("""SELECT id FROM content_items
+            WHERE workspace_id=? AND import_job_id=? AND review_state='staged'"""),
+            (workspace_id, job_id)).fetchall()
+        for row in item_rows:
+            self.store.connection.execute(query("DELETE FROM media_assets WHERE workspace_id=? AND content_item_id=?"),
+                                          (workspace_id, str(row["id"])))
+        self.store.connection.execute(query("""DELETE FROM import_checkpoints WHERE job_id=?
+            AND workspace_id=? AND checkpoint_key<>'preview'"""), (job_id, workspace_id))
+        self.store.connection.execute(query("""DELETE FROM content_items WHERE workspace_id=?
+            AND import_job_id=? AND review_state='staged'"""), (workspace_id, job_id))
+        self.store.connection.execute(query("""UPDATE import_jobs SET state='uploading', stage='uploading',
+            attempt=attempt+1, progress_current=0, bytes_current=0, warning_count=0, failure_count=0,
+            error_code=NULL, error_detail=NULL, started_at=?, finished_at=NULL, updated_at=?
+            WHERE id=? AND workspace_id=?"""), (now, now, job_id, workspace_id))
+        self._mark_setup_step(context.account_id, workspace_id, "import_history", "in_progress")
+        self.store._audit(workspace_id, context.account_id, "telegram.import_restarted",
+                          "import_job", job_id)
         return self._telegram_import_status(context, job_id)
 
     def _telegram_import_status(self, context: Any, job_id: str) -> dict[str, Any]:

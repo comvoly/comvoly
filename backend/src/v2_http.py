@@ -138,6 +138,22 @@ class V2HTTPAdapter:
                         and parts[6] == "complete"):
                     return 200, self.application.complete_telegram_import(
                         principal, workspace_id, parts[5], payload)
+                if (method == "GET" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
+                        and parts[6] == "review"):
+                    return 200, self.application.telegram_import_review(
+                        principal, workspace_id, parts[5])
+                if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
+                        and parts[6] == "accept"):
+                    return 200, self.application.accept_telegram_import(
+                        principal, workspace_id, parts[5])
+                if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
+                        and parts[6] == "cancel"):
+                    return 200, self.application.cancel_telegram_import(
+                        principal, workspace_id, parts[5])
+                if (method == "POST" and len(parts) == 7 and parts[3:5] == ["telegram", "imports"]
+                        and parts[6] == "restart"):
+                    return 200, self.application.restart_telegram_import(
+                        principal, workspace_id, parts[5])
                 if (method == "GET" and len(parts) == 6 and parts[3:5] == ["telegram", "imports"]):
                     return 200, self.application.telegram_import_status(
                         principal, workspace_id, parts[5])

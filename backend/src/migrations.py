@@ -200,7 +200,18 @@ TELEGRAM_GLOBAL_WEBHOOK = Migration(
     ),
 )
 
-MIGRATIONS = (V2_FOUNDATION, ACCOUNT_EXPERIENCE, TELEGRAM_LIVE_PILOT, TELEGRAM_GLOBAL_WEBHOOK)
+IMPORT_REVIEW = Migration(
+    5,
+    "v2_import_review_activation",
+    (
+        "ALTER TABLE content_items ADD COLUMN import_job_id TEXT",
+        "ALTER TABLE content_items ADD COLUMN review_state TEXT NOT NULL DEFAULT 'active'",
+        "CREATE INDEX IF NOT EXISTS content_import_review ON content_items(workspace_id, import_job_id, review_state)",
+    ),
+)
+
+MIGRATIONS = (V2_FOUNDATION, ACCOUNT_EXPERIENCE, TELEGRAM_LIVE_PILOT,
+              TELEGRAM_GLOBAL_WEBHOOK, IMPORT_REVIEW)
 
 
 def apply_migrations(connection: Any) -> None:

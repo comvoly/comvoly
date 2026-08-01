@@ -102,6 +102,11 @@ The owner can exclude date ranges, sender identities where appropriate, media cl
 or source spaces before confirmation. Exclusions are stored as policy, not only as a
 one-time parser setting.
 
+Implementation note (1 August 2026): the first review slice now stages historical
+Telegram text until owner acceptance, displays inventory/coverage/warnings/sample
+messages, and provides workspace-scoped cancel/restart controls. Date, sender, space
+and media-class exclusions remain part of the later curation slice.
+
 ## 5. Idempotency and cut-over
 
 ### Stable identity
@@ -256,4 +261,3 @@ Use synthetic and owner-authorised fixtures, never unapproved personal archives.
 - workspace isolation with identical filenames/checksums;
 - OCR/document extraction citation trace;
 - export and complete deletion lifecycle.
-

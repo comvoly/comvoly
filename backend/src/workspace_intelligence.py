@@ -26,10 +26,11 @@ class WorkspaceIntelligence:
         clauses = " OR ".join("LOWER(COALESCE(c.body_text, '')) LIKE LOWER(?)" for _ in terms)
         rows = self.connection.execute(query(f"""SELECT c.id, c.body_text, c.source_created_at,
             c.author_display_name, c.external_item_id, c.source_connection_id,
-            s.display_name AS source_name, s.provider
+            c.ingestion_method, s.display_name AS source_name, s.provider
             FROM content_items c JOIN source_connections s
               ON s.id=c.source_connection_id AND s.workspace_id=c.workspace_id
-            WHERE c.workspace_id=? AND c.source_deleted_at IS NULL AND ({clauses})
+            WHERE c.workspace_id=? AND c.source_deleted_at IS NULL AND c.review_state='active'
+              AND ({clauses})
             ORDER BY c.source_created_at DESC LIMIT ?"""),
             (context.workspace_id, *(f"%{term}%" for term in terms), min(max(limit, 1), 30))).fetchall()
         return [dict(row) for row in rows]
@@ -39,6 +40,7 @@ class WorkspaceIntelligence:
         citations = [{
             "content_id": row["id"], "source_name": row["source_name"],
             "provider": row["provider"], "external_item_id": row["external_item_id"],
+            "ingestion_method": row["ingestion_method"],
             "author": row["author_display_name"] or "Community member",
             "source_created_at": row["source_created_at"], "excerpt": str(row["body_text"] or "")[:800],
         } for row in evidence[:5]]

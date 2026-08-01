@@ -123,6 +123,13 @@ source is receiving messages, its last ingestion time and separate live/historic
 counts. The development account UI polls this every ten seconds. Historical imports
 must not change an already-connected live source to paused.
 
+Migration 5 adds the import review boundary. Newly imported historical items are
+`staged` and excluded from retrieval until an owner accepts the import. Review,
+acceptance, cancellation and restart endpoints are workspace/capability authorised.
+Cancellation removes only staged records linked to that import job and preserves live
+and previously accepted knowledge. The account UI exposes these actions under
+**Historical import review** and labels answer citations as live or historical.
+
 This import currently stores message text and metadata plus a media-path inventory; it
 does not upload the media directory. Do not configure a bot token in this environment
 until the bot registration, webhook secret, least-privilege permissions, community

@@ -109,14 +109,16 @@ class ComvolyStore:
     def search_content(self, context: WorkspaceContext, term: str, limit: int = 50) -> list[dict[str, Any]]:
         context.require("use_intelligence")
         rows = self.connection.execute(query("""SELECT id, body_text, source_created_at, source_connection_id
-            FROM content_items WHERE workspace_id = ? AND LOWER(COALESCE(body_text, '')) LIKE LOWER(?)
+            FROM content_items WHERE workspace_id = ? AND review_state='active'
+            AND LOWER(COALESCE(body_text, '')) LIKE LOWER(?)
             ORDER BY source_created_at DESC LIMIT ?"""), (context.workspace_id, f"%{term}%", limit)).fetchall()
         return [dict(row) for row in rows]
 
     def get_content(self, context: WorkspaceContext, content_id: str) -> dict[str, Any] | None:
         context.require("view_evidence")
         row = self.connection.execute(query("""SELECT id, body_text, source_created_at, source_connection_id
-            FROM content_items WHERE workspace_id = ? AND id = ?"""), (context.workspace_id, content_id)).fetchone()
+            FROM content_items WHERE workspace_id = ? AND id = ? AND review_state='active'"""),
+            (context.workspace_id, content_id)).fetchone()
         return dict(row) if row else None
 
     def list_media(self, context: WorkspaceContext, content_id: str) -> list[dict[str, Any]]:
@@ -124,7 +126,7 @@ class ComvolyStore:
         rows = self.connection.execute(query("""SELECT m.id, m.original_name, m.media_type, m.byte_size,
             m.download_state, m.extraction_state FROM media_assets m
             JOIN content_items c ON c.id = m.content_item_id AND c.workspace_id = m.workspace_id
-            WHERE m.workspace_id = ? AND m.content_item_id = ?"""),
+            WHERE m.workspace_id = ? AND m.content_item_id = ? AND c.review_state='active'"""),
             (context.workspace_id, content_id)).fetchall()
         return [dict(row) for row in rows]
 

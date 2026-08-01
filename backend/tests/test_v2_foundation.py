@@ -73,7 +73,8 @@ class V2FoundationTests(unittest.TestCase):
             [(1, "v2_secure_multi_community_foundation"),
              (2, "v2_account_workspace_experience"),
              (3, "v2_telegram_live_pilot"),
-             (4, "v2_telegram_global_webhook_binding")],
+             (4, "v2_telegram_global_webhook_binding"),
+             (5, "v2_import_review_activation")],
             [tuple(row) for row in migrations],
         )
 
@@ -435,6 +436,82 @@ class V2FoundationTests(unittest.TestCase):
                                                {}, member_headers)[0])
         self.assertEqual(404, adapter.dispatch("GET", "/v2/workspaces/ws_b/ingestion",
                                                {}, owner_headers)[0])
+
+    def test_import_review_accept_cancel_restart_and_mixed_retrieval_are_isolated(self) -> None:
+        self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id IN ('src_a','src_b')")
+        live_id = self.store.add_content(self.context_a, "src_a", "live-1",
+                                         "A current decision from the live chat", utc_now())
+        self.database.execute("UPDATE content_items SET ingestion_method='telegram_bot_webhook' WHERE id=?",
+                              (live_id,))
+        adapter = V2HTTPAdapter(self.database)
+        owner_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_a"}
+        other_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                         "X-Comvoly-Account-Id": "acct_b"}
+        document = json.loads((Path(__file__).parent / "fixtures" / "telegram_small.json").read_text(encoding="utf-8"))
+        summary = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/preview",
+                                   {"export": document}, owner_headers)[1]
+        started = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/imports",
+            {"summary": summary, "source_id": "src_a", "idempotency_key": "review-a"}, owner_headers)[1]
+        base = f"/v2/workspaces/ws_a/telegram/imports/{started['job_id']}"
+        adapter.dispatch("POST", f"{base}/chunks", {"chunk_index": 0, "messages": document["messages"]}, owner_headers)
+        adapter.dispatch("POST", f"{base}/complete", {"summary": summary}, owner_headers)
+
+        before = adapter.dispatch("POST", "/v2/workspaces/ws_a/intelligence/ask",
+                                  {"question": "What decision was made?"}, owner_headers)[1]
+        self.assertEqual({"telegram_bot_webhook"},
+                         {item["ingestion_method"] for item in before["citations"]})
+        status, review = adapter.dispatch("GET", f"{base}/review", {}, owner_headers)
+        self.assertEqual((200, True, 3, 3), (status, review["can_accept"],
+                         review["inventory"]["message_count"], len(review["samples"])))
+        self.assertEqual(3, review["summary"]["message_count"])
+        evidence_context = self.store.context(self.owner_a, self.workspace_a, "view_evidence")
+        retrieval_context = self.store.context(self.owner_a, self.workspace_a, "use_intelligence")
+        staged_id = review["samples"][0]["id"]
+        self.assertIsNone(self.store.get_content(evidence_context, staged_id))
+        self.assertEqual([], self.store.search_content(retrieval_context, "later decision"))
+        self.assertEqual(404, adapter.dispatch("GET",
+            f"/v2/workspaces/ws_b/telegram/imports/{started['job_id']}/review", {}, other_headers)[0])
+        self.store.add_membership(self.context_a, self.member.account_id, "member")
+        member_headers = {"Authorization": "Bearer a-long-local-development-secret",
+                          "X-Comvoly-Account-Id": "acct_member"}
+        self.assertEqual(404, adapter.dispatch("GET", f"{base}/review", {}, member_headers)[0])
+
+        accepted = adapter.dispatch("POST", f"{base}/accept", {}, owner_headers)[1]
+        self.assertEqual(("active", False), (accepted["state"], accepted["can_accept"]))
+        self.assertIsNotNone(self.store.get_content(evidence_context, staged_id))
+        after = adapter.dispatch("POST", "/v2/workspaces/ws_a/intelligence/ask",
+                                 {"question": "What decision was made?"}, owner_headers)[1]
+        self.assertEqual({"telegram_bot_webhook", "telegram_desktop_export"},
+                         {item["ingestion_method"] for item in after["citations"]})
+        self.assertEqual(409, adapter.dispatch("POST", f"{base}/cancel", {}, owner_headers)[0])
+
+        repeated = adapter.dispatch("POST", "/v2/workspaces/ws_a/telegram/imports",
+            {"summary": summary, "source_id": "src_a", "idempotency_key": "review-a-changed-file"}, owner_headers)[1]
+        repeated_base = f"/v2/workspaces/ws_a/telegram/imports/{repeated['job_id']}"
+        adapter.dispatch("POST", f"{repeated_base}/chunks",
+                         {"chunk_index": 0, "messages": document["messages"]}, owner_headers)
+        repeated_review = adapter.dispatch("GET", f"{repeated_base}/review", {}, owner_headers)[1]
+        self.assertEqual((0, 3), (repeated_review["inventory"]["message_count"],
+                                 repeated_review["inventory"]["overlap_count"]))
+        adapter.dispatch("POST", f"{repeated_base}/cancel", {}, owner_headers)
+        still_available = adapter.dispatch("POST", "/v2/workspaces/ws_a/intelligence/ask",
+                                           {"question": "What decision was made?"}, owner_headers)[1]
+        self.assertEqual({"telegram_bot_webhook", "telegram_desktop_export"},
+                         {item["ingestion_method"] for item in still_available["citations"]})
+
+        live_b = self.store.add_content(self.context_b, "src_b", "live-b", "Keep this live message", utc_now())
+        self.database.execute("UPDATE content_items SET ingestion_method='telegram_bot_webhook' WHERE id=?", (live_b,))
+        started_b = adapter.dispatch("POST", "/v2/workspaces/ws_b/telegram/imports",
+            {"summary": summary, "source_id": "src_b", "idempotency_key": "review-b"}, other_headers)[1]
+        base_b = f"/v2/workspaces/ws_b/telegram/imports/{started_b['job_id']}"
+        adapter.dispatch("POST", f"{base_b}/chunks", {"chunk_index": 0, "messages": document["messages"]}, other_headers)
+        cancelled = adapter.dispatch("POST", f"{base_b}/cancel", {}, other_headers)[1]
+        self.assertEqual(("cancelled", 0), (cancelled["state"], cancelled["inventory"]["message_count"]))
+        self.assertEqual(1, self.database.execute("SELECT COUNT(*) FROM content_items WHERE id=?", (live_b,)).fetchone()[0])
+        restarted = adapter.dispatch("POST", f"{base_b}/restart", {}, other_headers)[1]
+        self.assertEqual(("uploading", 0, [], 1), (restarted["state"], restarted["progress_current"],
+                         restarted["completed_chunks"], restarted["attempt"]))
 
     def test_telegram_live_webhook_is_secret_verified_idempotent_and_workspace_bound(self) -> None:
         self.database.execute("UPDATE source_connections SET provider='telegram' WHERE id='src_a'")

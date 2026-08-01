@@ -25,7 +25,16 @@ type TelegramLiveStatus = {
 type IntelligenceAnswer = {
   question: string; answer: string; evidence_count: number; mode: string;
   citations: Array<{ content_id: string; source_name: string; provider: string;
-    external_item_id: string; author: string; source_created_at: string; excerpt: string }>;
+    external_item_id: string; author: string; source_created_at: string; excerpt: string;
+    ingestion_method: string }>;
+};
+
+type ImportReview = TelegramImportStatus & {
+  summary: Partial<TelegramStreamSummary> & { warnings?: string[] };
+  inventory: { message_count: number; participant_count: number; overlap_count: number; history_start: string | null; history_end: string | null };
+  samples: Array<{ id: string; external_item_id: string; author_external_id: string | null;
+    author_display_name: string | null; body_text: string | null; source_created_at: string; review_state: string }>;
+  can_accept: boolean; can_cancel: boolean; can_restart: boolean;
 };
 
 type IngestionSource = {
@@ -38,7 +47,7 @@ type IngestionHealth = { workspace_id: string; stored_message_count: number; las
 type TelegramImportStatus = {
   job_id: string; source_id: string; state: string; stage: string; progress_current: number;
   progress_total: number | null; bytes_current: number; bytes_total: number | null;
-  completed_chunks: number[]; resumed?: boolean;
+  completed_chunks: number[]; warning_count: number; failure_count: number; attempt: number; resumed?: boolean;
 };
 
 export default function AccountPage() {
@@ -216,7 +225,44 @@ function Sources({ detail, token, refresh }: { detail: WorkspaceDetail; token: s
     <div className="mt-5 space-y-3">{detail.sources.map((source) => <div key={source.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 px-4 py-3"><div><p className="font-medium">{source.display_name}</p><p className="mt-1 text-xs capitalize text-slate-500">{source.provider} · {source.state}</p></div><div className="flex items-center gap-3"><span className={`rounded-full px-3 py-1 text-xs ${source.state === "connected" ? "bg-emerald-400/10 text-emerald-200" : "bg-slate-700"}`}>{source.state === "connected" ? "Connected" : "Not connected"}</span>{canManage && source.provider === "telegram" && <button onClick={async () => { if (!window.confirm("Remove this Telegram connection? Stored messages will be kept.")) return; await api(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/disconnect/${source.id}`, { method: "POST", body: "{}" }); await refresh(); }} className="text-xs font-semibold text-rose-200 underline underline-offset-4">Remove connection</button>}</div></div>)}{!detail.sources.length && <p className="text-sm text-slate-500">No active connections yet.</p>}</div>
     {canManage && <details className="mt-7 border-t border-white/10 pt-5"><summary className="cursor-pointer font-medium text-slate-200">Add earlier Telegram messages <span className="text-sm font-normal text-slate-500">(optional)</span></summary><TelegramHistoryImport detail={detail} token={token} refresh={refresh} /></details>}
     <details className="mt-5 text-sm text-slate-400"><summary className="cursor-pointer">Other platforms</summary><p className="mt-3 leading-6">Discord and Skool connections are planned after the Telegram pilot.</p></details>
-    <div className="mt-6 border-t border-white/10 pt-5"><h4 className="font-medium">Import history</h4>{detail.imports.length ? detail.imports.map((job) => <div key={job.id} className="mt-3 rounded-xl bg-[#061124] p-3 text-sm text-slate-300"><div className="flex justify-between gap-3"><span className="capitalize">{job.stage.replace("_", " ")}</span><span>{job.progress_current}/{job.progress_total ?? "?"}</span></div>{job.warning_count + job.failure_count > 0 && <p className="mt-2 text-xs text-amber-200">{job.warning_count} warnings · {job.failure_count} failures</p>}</div>) : <p className="mt-2 text-sm text-slate-500">No historical imports yet.</p>}</div>
+    <ImportReviewList detail={detail} token={token} refresh={refresh} />
+  </div>;
+}
+
+function ImportReviewList({ detail, token, refresh }: { detail: WorkspaceDetail; token: string; refresh: () => Promise<void> }) {
+  const [openId, setOpenId] = useState("");
+  const [review, setReview] = useState<ImportReview | null>(null);
+  const [busyAction, setBusyAction] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function load(jobId: string) {
+    if (openId === jobId) { setOpenId(""); setReview(null); return; }
+    setOpenId(jobId); setReview(null); setError(""); setMessage("");
+    try { setReview(await api<ImportReview>(API_URL, token, `/v2/workspaces/${detail.workspace.id}/telegram/imports/${jobId}/review`)); }
+    catch (e) { setError(e instanceof Error ? e.message : "Could not load this import review."); }
+  }
+  async function action(name: "accept" | "cancel" | "restart") {
+    if (!review) return;
+    if (name === "cancel" && !window.confirm("Cancel this import and remove only its staged historical messages? Live Telegram messages will remain.")) return;
+    setBusyAction(name); setError(""); setMessage("");
+    try {
+      const next = await api<ImportReview | TelegramImportStatus>(API_URL, token,
+        `/v2/workspaces/${detail.workspace.id}/telegram/imports/${review.job_id}/${name}`, { method: "POST", body: "{}" });
+      if (name === "restart") {
+        setReview(null); setOpenId(""); setMessage("Restart prepared. Choose the same result.json above to resume from the beginning.");
+      } else setReview(next as ImportReview);
+      await refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : `Could not ${name} this import.`); }
+    finally { setBusyAction(""); }
+  }
+  return <div className="mt-6 border-t border-white/10 pt-5"><div className="flex flex-wrap items-end justify-between gap-3"><div><h4 className="font-medium">Historical import review</h4><p className="mt-1 text-xs text-slate-500">Imported knowledge is not used in answers until you accept it.</p></div></div>
+    {message && <p className="mt-3 rounded-xl bg-emerald-300/10 p-3 text-sm text-emerald-100">{message}</p>}
+    {detail.imports.length ? detail.imports.map((job) => <div key={job.id} className="mt-3 rounded-xl border border-white/10 bg-[#061124] p-4 text-sm text-slate-300"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium capitalize">{job.stage.replaceAll("_", " ")}</p><p className="mt-1 text-xs text-slate-500">{job.progress_current.toLocaleString()}/{job.progress_total?.toLocaleString() ?? "?"} messages · updated {formatDateTime(job.updated_at)}</p></div><button onClick={() => void load(job.id)} className="rounded-lg border border-white/15 px-3 py-2 text-xs font-semibold">{openId === job.id ? "Close" : job.state === "owner_review" ? "Review and accept" : "View details"}</button></div>{job.warning_count + job.failure_count > 0 && <p className="mt-2 text-xs text-amber-200">{job.warning_count} warnings · {job.failure_count} failures</p>}
+      {openId === job.id && !review && !error && <p className="mt-4 text-xs text-slate-400">Loading review…</p>}
+      {openId === job.id && error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
+      {openId === job.id && review && <div className="mt-4 border-t border-white/10 pt-4"><div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><Metric label="Messages staged" value={review.inventory.message_count} /><Metric label="Already stored" value={review.inventory.overlap_count} /><Metric label="Participants" value={review.inventory.participant_count} /><Metric label="Warnings" value={review.warning_count} /><Metric label="Failed items" value={review.failure_count} /></div><p className="mt-3 text-xs text-slate-500">Coverage: {formatDate(review.inventory.history_start)} – {formatDate(review.inventory.history_end)}</p>{(review.summary.warnings || []).map((warning) => <p key={warning} className="mt-2 rounded-lg bg-amber-300/10 p-2 text-xs text-amber-100">{warning}</p>)}{review.samples.length > 0 && <div className="mt-4"><p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Recent sample</p><div className="mt-2 space-y-2">{review.samples.map((sample) => <div key={sample.id} className="rounded-lg bg-white/[.04] p-3"><div className="flex justify-between gap-3 text-xs text-slate-500"><span>{sample.author_display_name || sample.author_external_id || "Community member"}</span><span>{formatDate(sample.source_created_at)}</span></div><p className="mt-1 line-clamp-3 text-sm text-slate-300">{sample.body_text || "Message without text"}</p></div>)}</div></div>}<div className="mt-5 flex flex-wrap gap-3">{review.can_accept && <button disabled={Boolean(busyAction)} onClick={() => void action("accept")} className="rounded-xl bg-[#ffcf4a] px-4 py-2.5 font-bold text-[#07152b]">{busyAction === "accept" ? "Accepting…" : "Accept knowledge"}</button>}{review.can_cancel && <button disabled={Boolean(busyAction)} onClick={() => void action("cancel")} className="rounded-xl border border-rose-300/30 px-4 py-2.5 font-semibold text-rose-200">{busyAction === "cancel" ? "Cancelling…" : "Cancel import"}</button>}{review.can_restart && <button disabled={Boolean(busyAction)} onClick={() => void action("restart")} className="rounded-xl border border-[#ffcf4a]/40 px-4 py-2.5 font-semibold text-[#ffcf4a]">{busyAction === "restart" ? "Preparing…" : "Restart import"}</button>}{review.state === "active" && <span className="rounded-full bg-emerald-400/10 px-3 py-2 text-xs font-semibold text-emerald-200">Accepted · available to Comvoly</span>}{review.state === "cancelled" && <span className="rounded-full bg-slate-700 px-3 py-2 text-xs">Cancelled · staged messages removed</span>}</div></div>}
+    </div>) : <p className="mt-2 text-sm text-slate-500">No historical imports yet.</p>}
   </div>;
 }
 
@@ -405,7 +451,7 @@ function WorkspaceIntelligencePanel({ detail, token }: { detail: WorkspaceDetail
   return <div className="rounded-3xl border border-[#ffcf4a]/25 bg-[#ffcf4a]/[.035] p-6"><Eyebrow>Interpret community knowledge</Eyebrow><h3 className="mt-2 text-xl font-semibold">Ask {detail.workspace.name}</h3><p className="mt-2 text-sm leading-6 text-slate-400">Pilot answers use only this workspace and always show their supporting community messages.</p>
     <form className="mt-5 flex flex-col gap-3 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void submitQuestion(); }}><textarea required maxLength={1000} value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="What has this community said about…?" className="min-h-24 flex-1 rounded-2xl border border-white/15 bg-[#061124] p-4 text-sm" /><button disabled={busy || !question.trim()} aria-busy={busy} className="rounded-2xl bg-[#ffcf4a] px-6 py-3 font-bold text-[#07152b]">{busy ? "Interpreting…" : "Ask Comvoly"}</button></form>
     {error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
-    {answer && <div className="mt-5 border-t border-white/10 pt-5"><p className="leading-7 text-slate-100">{answer.answer}</p><p className="mt-2 text-xs text-slate-500">Checked against {answer.evidence_count} authorised messages · extractive pilot</p><div className="mt-4 space-y-3">{answer.citations.map((item) => <article key={item.content_id} className="rounded-xl bg-[#061124] p-4"><div className="flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span>{item.source_name} · {item.author}</span><span>Message {item.external_item_id}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{item.excerpt}</p></article>)}</div></div>}
+    {answer && <div className="mt-5 border-t border-white/10 pt-5"><p className="leading-7 text-slate-100">{answer.answer}</p><p className="mt-2 text-xs text-slate-500">Checked against {answer.evidence_count} authorised messages · extractive pilot</p><div className="mt-4 space-y-3">{answer.citations.map((item) => <article key={item.content_id} className="rounded-xl bg-[#061124] p-4"><div className="flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span>{item.source_name} · {item.author}</span><span>{item.ingestion_method === "telegram_desktop_export" ? "Historical import" : item.ingestion_method === "telegram_bot_webhook" ? "Live Telegram" : "Community archive"} · Message {item.external_item_id}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{item.excerpt}</p></article>)}</div></div>}
   </div>;
 }
 

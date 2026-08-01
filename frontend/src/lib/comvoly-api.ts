@@ -8,7 +8,7 @@ export type WorkspaceDetail = {
   capabilities: string[];
   setup_steps: Array<{ step_key: string; state: string; completed_at: string | null }>;
   sources: Array<{ id: string; provider: string; display_name: string; state: string; health: string }>;
-  imports: Array<{ id: string; job_type: string; state: string; stage: string; progress_current: number; progress_total: number | null; warning_count: number; failure_count: number }>;
+  imports: Array<{ id: string; source_connection_id: string | null; job_type: string; state: string; stage: string; progress_current: number; progress_total: number | null; warning_count: number; failure_count: number; updated_at: string }>;
 };
 
 export type ComvolySession = { account_id: string; workspaces: WorkspaceSummary[] };
