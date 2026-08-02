@@ -39,7 +39,12 @@ def connect_database(sqlite_path: Path) -> Iterator[Any]:
 
 
 def query(sql: str) -> str:
-    return sql.replace("?", "%s") if uses_postgres() else sql
+    if not uses_postgres():
+        return sql
+    # psycopg treats every percent sign in a parameterised statement as part of
+    # its placeholder grammar. Escape SQL literals first, then translate the
+    # portable SQLite-style markers used throughout Comvoly.
+    return sql.replace("%", "%%").replace("?", "%s")
 
 
 def create_schema(connection: Any) -> None:

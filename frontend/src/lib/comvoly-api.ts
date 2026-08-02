@@ -14,10 +14,15 @@ export type WorkspaceDetail = {
 export type ComvolySession = { account_id: string; workspaces: WorkspaceSummary[] };
 
 export async function api<T>(baseUrl: string, token: string, path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init?.headers || {}) },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(init?.headers || {}) },
+    });
+  } catch {
+    throw new Error("Comvoly's service could not be reached. Nothing was uploaded.");
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.detail || "Comvoly could not complete that request.");
   return body as T;

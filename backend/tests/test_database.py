@@ -18,6 +18,15 @@ class DatabaseTests(unittest.TestCase):
             self.assertTrue(uses_postgres())
             self.assertEqual(query("SELECT * FROM messages WHERE id = ?"), "SELECT * FROM messages WHERE id = %s")
 
+    def test_postgres_mode_escapes_literal_percent_signs(self) -> None:
+        with patch.dict("os.environ", {"DATABASE_URL": "postgresql://example.invalid/test"}):
+            self.assertEqual(
+                query("SELECT checkpoint_key FROM import_checkpoints "
+                      "WHERE job_id=? AND checkpoint_key LIKE 'chunk:%'"),
+                "SELECT checkpoint_key FROM import_checkpoints "
+                "WHERE job_id=%s AND checkpoint_key LIKE 'chunk:%%'",
+            )
+
     def test_shared_schema_is_created_in_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"DATABASE_URL": ""}):
             path = Path(directory) / "archive.db"

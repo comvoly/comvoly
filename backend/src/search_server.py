@@ -6,6 +6,7 @@ import json
 import os
 import asyncio
 import threading
+import traceback
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -260,9 +261,17 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
 
         headers = {name: self.headers.get(name, "") for name in (
             "Authorization", "X-Comvoly-Account-Id", "X-Telegram-Bot-Api-Secret-Token")}
-        with connect_database(DATABASE_PATH) as database:
-            status, response = V2HTTPAdapter(database).dispatch(method, path, payload, headers)
-        self.send_json(HTTPStatus(status), response)
+        try:
+            with connect_database(DATABASE_PATH) as database:
+                status, response = V2HTTPAdapter(database).dispatch(method, path, payload, headers)
+            self.send_json(HTTPStatus(status), response)
+        except Exception:
+            # Keep diagnostics in the private service logs, while always returning
+            # a CORS-enabled JSON response instead of dropping the browser socket.
+            traceback.print_exc()
+            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {
+                "detail": "Comvoly could not complete that request. Nothing was accepted; please try again."
+            })
 
     def login(self) -> None:
         try:

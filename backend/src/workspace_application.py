@@ -339,7 +339,7 @@ class WorkspaceApplication:
         legacy_overlap = max(0, int(status["progress_current"]) - int(inventory["total_count"]))
         checkpoint_rows = self.store.connection.execute(query("""SELECT cursor_json
             FROM import_checkpoints WHERE job_id=? AND workspace_id=?
-            AND checkpoint_key LIKE 'chunk:%'"""), (job_id, workspace_id)).fetchall()
+            AND checkpoint_key LIKE ?"""), (job_id, workspace_id, "chunk:%")).fetchall()
         diagnostics = {"new": 0, "unchanged": 0, "changed": 0, "skipped": 0}
         for row in checkpoint_rows:
             try:
@@ -506,8 +506,8 @@ class WorkspaceApplication:
             raise ApplicationError(404, "Import not found.")
         checkpoints = self.store.connection.execute(query("""SELECT checkpoint_key
             FROM import_checkpoints WHERE job_id=? AND workspace_id=?
-            AND checkpoint_key LIKE 'chunk:%' ORDER BY checkpoint_key"""),
-            (job_id, context.workspace_id)).fetchall()
+            AND checkpoint_key LIKE ? ORDER BY checkpoint_key"""),
+            (job_id, context.workspace_id, "chunk:%")).fetchall()
         completed = sorted(int(str(row["checkpoint_key"]).split(":", 1)[1])
                            for row in checkpoints)
         result = dict(job)
