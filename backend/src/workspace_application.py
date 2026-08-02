@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import date
 import json
+import os
 from typing import Any
 
 from authorization import AccessDenied, Principal
@@ -24,11 +25,12 @@ class ApplicationError(Exception):
 
 
 class WorkspaceApplication:
-    def __init__(self, connection: Any, telegram_live: TelegramLiveService | None = None):
+    def __init__(self, connection: Any, telegram_live: TelegramLiveService | None = None,
+                 intelligence: WorkspaceIntelligence | None = None):
         self.store = ComvolyStore(connection)
         self.invitations = InvitationService(connection)
         self.telegram_live = telegram_live
-        self.intelligence = WorkspaceIntelligence(connection)
+        self.intelligence = intelligence or WorkspaceIntelligence(connection)
 
     def session(self, principal: Principal) -> dict[str, Any]:
         workspaces = self.store.list_workspaces(principal)
@@ -609,18 +611,44 @@ class WorkspaceApplication:
         question = str(payload.get("question", "")).strip()
         if not question or len(question) > 1000:
             raise ApplicationError(400, "Enter a question of up to 1,000 characters.")
-        result = self.intelligence.answer(context, question)
         now = utc_now()
         period_start = now[:7] + "-01"
+        evidence = self.intelligence.retrieve_for_answer(context, question, 20)
+        allow_interpretation = False
+        if evidence and self.intelligence.interpretation_available:
+            limit = max(0, int(os.getenv("COMVOLY_AI_MONTHLY_QUESTION_LIMIT", "50")))
+            if limit:
+                reserved = self.store.connection.execute(query("""INSERT INTO usage_counters
+                    (workspace_id, metric, period_start, quantity, estimated_cost_minor, updated_at)
+                    VALUES (?, 'ai_interpretations', ?, 1, 0, ?)
+                    ON CONFLICT(workspace_id, metric, period_start) DO UPDATE SET
+                    quantity=usage_counters.quantity + 1, updated_at=excluded.updated_at
+                    WHERE usage_counters.quantity < ? RETURNING quantity"""),
+                    (workspace_id, period_start, now, limit)).fetchone()
+                allow_interpretation = reserved is not None
+        result = self.intelligence.answer(context, question, evidence=evidence,
+                                          allow_interpretation=allow_interpretation)
         self.store.connection.execute(query("""INSERT INTO usage_counters
             (workspace_id, metric, period_start, quantity, estimated_cost_minor, updated_at)
             VALUES (?, 'intelligence_questions', ?, 1, 0, ?)
             ON CONFLICT(workspace_id, metric, period_start) DO UPDATE SET
             quantity=usage_counters.quantity + 1, updated_at=excluded.updated_at"""),
             (workspace_id, period_start, now))
+        usage = result.get("usage", {})
+        for metric, value in (("ai_input_tokens", usage.get("input_tokens", 0)),
+                              ("ai_output_tokens", usage.get("output_tokens", 0))):
+            quantity = max(0, int(value or 0))
+            if quantity:
+                self.store.connection.execute(query("""INSERT INTO usage_counters
+                    (workspace_id, metric, period_start, quantity, estimated_cost_minor, updated_at)
+                    VALUES (?, ?, ?, ?, 0, ?) ON CONFLICT(workspace_id, metric, period_start)
+                    DO UPDATE SET quantity=usage_counters.quantity + excluded.quantity,
+                    updated_at=excluded.updated_at"""),
+                    (workspace_id, metric, period_start, quantity, now))
         self.store._audit(workspace_id, context.account_id, "intelligence.asked",
                           "workspace", workspace_id,
-                          metadata={"evidence_count": result["evidence_count"], "mode": result["mode"]})
+                          metadata={"evidence_count": result["evidence_count"], "mode": result["mode"],
+                                    "model": result.get("model")})
         return result
 
     def search(self, principal: Principal, workspace_id: str,

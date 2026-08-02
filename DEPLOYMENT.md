@@ -135,6 +135,30 @@ can download an aggregate JSON report and apply reversible inclusive date or exa
 sender-ID exclusions before acceptance. The review policy is stored as an import
 checkpoint; it does not add an external processor, object store or deployment secret.
 
+### Development AI interpretation
+
+The v2 answer path uses ranked, workspace-scoped evidence before any external model
+call. Generic question words are removed, exact message terms are scored, service
+items and unaccepted imports are excluded, and a maximum of 20 evidence messages / 24K
+characters is supplied to the interpreter. The response must cite valid evidence
+labels; otherwise Comvoly falls back to a ranked evidence view rather than presenting
+an unsupported AI answer.
+
+Enable this only in **v2-development** after the founder approves model usage:
+
+- `OPENAI_API_KEY=<isolated OpenAI project key>`
+- `COMVOLY_AI_INTERPRETATION_ENABLED=true`
+- `COMVOLY_AI_MODEL=gpt-5.6-luna`
+- `COMVOLY_AI_REASONING=none`
+- `COMVOLY_AI_MAX_OUTPUT_TOKENS=700`
+- `COMVOLY_AI_MONTHLY_QUESTION_LIMIT=50`
+
+Responses use `store=false`, a one-way account safety identifier and no web or tool
+access. The allowance is reserved atomically per workspace and month before a model
+call. Input/output token totals are recorded separately; questions and message text
+are not written to audit metadata. Production remains disabled until the separate
+privacy, retention, entitlement and budget review.
+
 This import currently stores message text and metadata plus a media-path inventory; it
 does not upload the media directory. Do not configure a bot token in this environment
 until the bot registration, webhook secret, least-privilege permissions, community

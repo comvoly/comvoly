@@ -24,7 +24,7 @@ type TelegramLiveStatus = {
 
 type IntelligenceAnswer = {
   question: string; answer: string; evidence_count: number; mode: string;
-  citations: Array<{ content_id: string; source_name: string; provider: string;
+  citations: Array<{ evidence_label?: string; content_id: string; source_name: string; provider: string;
     external_item_id: string; author: string; source_created_at: string; excerpt: string;
     ingestion_method: string }>;
 };
@@ -497,7 +497,7 @@ function WorkspaceIntelligencePanel({ detail, token }: { detail: WorkspaceDetail
   return <div className="rounded-3xl border border-[#ffcf4a]/25 bg-[#ffcf4a]/[.035] p-6"><Eyebrow>Interpret community knowledge</Eyebrow><h3 className="mt-2 text-xl font-semibold">Ask {detail.workspace.name}</h3><p className="mt-2 text-sm leading-6 text-slate-400">Pilot answers use only this workspace and always show their supporting community messages.</p>
     <form className="mt-5 flex flex-col gap-3 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void submitQuestion(); }}><textarea required maxLength={1000} value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} placeholder="What has this community said about…?" className="min-h-24 flex-1 rounded-2xl border border-white/15 bg-[#061124] p-4 text-sm" /><button disabled={busy || !question.trim()} aria-busy={busy} className="rounded-2xl bg-[#ffcf4a] px-6 py-3 font-bold text-[#07152b]">{busy ? "Interpreting…" : "Ask Comvoly"}</button></form>
     {error && <p className="mt-4 text-sm text-rose-200">{error}</p>}
-    {answer && <div className="mt-5 border-t border-white/10 pt-5"><p className="leading-7 text-slate-100">{answer.answer}</p><p className="mt-2 text-xs text-slate-500">Checked against {answer.evidence_count} authorised messages · extractive pilot</p><div className="mt-4 space-y-3">{answer.citations.map((item) => <article key={item.content_id} className="rounded-xl bg-[#061124] p-4"><div className="flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span>{item.source_name} · {item.author}</span><span>{item.ingestion_method === "telegram_desktop_export" ? "Historical import" : item.ingestion_method === "telegram_bot_webhook" ? "Live Telegram" : "Community archive"} · Message {item.external_item_id}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{item.excerpt}</p></article>)}</div></div>}
+    {answer && <div className="mt-5 border-t border-white/10 pt-5"><p className="leading-7 text-slate-100">{answer.answer}</p><p className="mt-2 text-xs text-slate-500">Checked against {answer.evidence_count} authorised messages · {answer.mode === "ai_interpretation" ? "AI interpretation with citations" : answer.mode === "insufficient_evidence" ? "not enough evidence" : "ranked evidence only"}</p><div className="mt-4 space-y-3">{answer.citations.map((item) => <article key={item.content_id} className="rounded-xl bg-[#061124] p-4"><div className="flex flex-wrap justify-between gap-2 text-xs text-slate-500"><span>{item.evidence_label ? `[${item.evidence_label}] · ` : ""}{item.source_name} · {item.author}</span><span>{item.ingestion_method === "telegram_desktop_export" ? "Historical import" : item.ingestion_method === "telegram_bot_webhook" ? "Live Telegram" : "Community archive"} · Message {item.external_item_id}</span></div><p className="mt-2 text-sm leading-6 text-slate-300">{item.excerpt}</p></article>)}</div></div>}
   </div>;
 }
 
