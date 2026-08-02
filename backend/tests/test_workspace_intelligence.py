@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -40,7 +41,11 @@ class FakeResponses:
     def create(self, **kwargs: object) -> object:
         self.request = kwargs
         return SimpleNamespace(
-            output_text="A cited synthesis [E2].",
+            output_text=json.dumps({
+                "answer": "A cited synthesis.",
+                "citation_indexes": [2],
+                "evidence_sufficient": True,
+            }),
             usage=SimpleNamespace(input_tokens=75, output_tokens=9),
         )
 
@@ -49,6 +54,14 @@ class InvalidCitationInterpreter:
     def interpret(self, question: str, evidence: list[dict[str, object]],
                   safety_identifier: str) -> Interpretation:
         return Interpretation("An unsupported claim [E99].", [99], "test-model")
+
+
+class InsufficientEvidenceInterpreter:
+    def interpret(self, question: str, evidence: list[dict[str, object]],
+                  safety_identifier: str) -> Interpretation:
+        return Interpretation(
+            "This archive does not contain a meaningful view of Tesla drivers; it only uses "
+            "Tesla as an example.", [], "test-model", evidence_sufficient=False)
 
 
 class WorkspaceIntelligenceTests(unittest.TestCase):
@@ -149,8 +162,21 @@ class WorkspaceIntelligenceTests(unittest.TestCase):
         self.assertEqual((75, 9), (result.input_tokens, result.output_tokens))
         self.assertEqual(False, responses.request["store"])
         self.assertEqual("cv_safe", responses.request["safety_identifier"])
-        self.assertEqual({"verbosity": "low"}, responses.request["text"])
+        text_contract = responses.request["text"]
+        self.assertEqual("low", text_contract["verbosity"])
+        self.assertEqual("json_schema", text_contract["format"]["type"])
+        self.assertTrue(text_contract["format"]["strict"])
         self.assertNotIn("Beta", str(responses.request["input"]))
+
+    def test_ai_can_safely_report_that_retrieved_evidence_is_insufficient(self) -> None:
+        self.add("ws_a", "src_a", "1", "Tesla is only an example for the product", "2026-08-01T10:00:00Z")
+        context = self.store.context(self.owner_a, "ws_a", "use_intelligence")
+        result = WorkspaceIntelligence(self.database, InsufficientEvidenceInterpreter()).answer(
+            context, "What does the community think of Tesla drivers?")
+        self.assertEqual("insufficient_evidence", result["mode"])
+        self.assertIn("does not contain a meaningful view", result["answer"])
+        self.assertEqual([], result["citations"])
+        self.assertEqual("test-model", result["model"])
 
     def test_invalid_model_citation_cannot_be_presented_as_interpretation(self) -> None:
         self.add("ws_a", "src_a", "1", "Tesla drivers discussed charging", "2026-08-01T10:00:00Z")
