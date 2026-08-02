@@ -159,6 +159,9 @@ call. Input/output token totals are recorded separately; questions and message t
 are not written to audit metadata. Production remains disabled until the separate
 privacy, retention, entitlement and budget review.
 
+The public `/health` response reports only the boolean
+`ai_interpretation_configured`; it never returns a key, model prompt or account data.
+
 This import currently stores message text and metadata plus a media-path inventory; it
 does not upload the media directory. Do not configure a bot token in this environment
 until the bot registration, webhook secret, least-privilege permissions, community

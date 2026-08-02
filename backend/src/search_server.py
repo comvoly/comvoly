@@ -37,6 +37,13 @@ class RequestTooLarge(ValueError):
     pass
 
 
+def ai_interpretation_configured() -> bool:
+    return (
+        os.getenv("COMVOLY_AI_INTERPRETATION_ENABLED", "false").lower() == "true"
+        and bool(os.getenv("OPENAI_API_KEY", "").strip())
+    )
+
+
 def status_summary() -> dict[str, object]:
     summary: dict[str, object] = {
         "database_found": DATABASE_PATH.exists() or bool(os.getenv("DATABASE_URL")),
@@ -154,7 +161,11 @@ class ComvolyAPIHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         request = urlparse(self.path)
         if request.path == "/health":
-            self.send_json(HTTPStatus.OK, {"status": "ok", "authentication_configured": authentication_configured()})
+            self.send_json(HTTPStatus.OK, {
+                "status": "ok",
+                "authentication_configured": authentication_configured(),
+                "ai_interpretation_configured": ai_interpretation_configured(),
+            })
             return
         if request.path == "/auth/session":
             self.send_json(HTTPStatus.OK, {"authenticated": self.authenticated(), "setup_required": not authentication_configured()})

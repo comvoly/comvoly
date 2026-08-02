@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 import sys
 import tempfile
 import unittest
@@ -50,6 +51,14 @@ class SearchServerDataTests(unittest.TestCase):
         self.assertIsNotNone(message)
         self.assertEqual(message["telegram_message_id"], 42)
         self.assertIsNone(search_server.get_message(999))
+
+    def test_ai_health_flag_requires_both_gate_and_server_key(self) -> None:
+        with patch.dict(os.environ, {
+                "COMVOLY_AI_INTERPRETATION_ENABLED": "true", "OPENAI_API_KEY": "test-key"}):
+            self.assertTrue(search_server.ai_interpretation_configured())
+        with patch.dict(os.environ, {
+                "COMVOLY_AI_INTERPRETATION_ENABLED": "false", "OPENAI_API_KEY": "test-key"}):
+            self.assertFalse(search_server.ai_interpretation_configured())
 
 
 if __name__ == "__main__":
